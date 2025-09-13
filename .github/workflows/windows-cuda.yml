@@ -76,17 +76,29 @@ jobs:
           path: cuda_13.0.0_windows.exe
           key: cuda-installer-13.0.0
 
+      - name: Cache CUDA toolkit folders
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0
+            C:/Program Files/NVIDIA Corporation/Nsight*
+          key: cuda-folders-${{ runner.os }}-13.0.0
+
       - name: Install CUDA Toolkit
         shell: powershell
         run: |
           $CudaUrl = "https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe"
           $Installer = "cuda_13.0.0_windows.exe"
+          $CudaPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0"
           if (!(Test-Path $Installer)) {
             Invoke-WebRequest -Uri $CudaUrl -OutFile $Installer
           }
-          Start-Process -FilePath .\$Installer -ArgumentList "-s", "--toolkit" -Wait -NoNewWindow
-          echo "CUDA_PATH=C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0" >> $env:GITHUB_ENV
-          echo "PATH=C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.0\\bin;$env:PATH" >> $env:GITHUB_ENV
+          if (!(Test-Path "$CudaPath\bin\nvcc.exe")) {
+            Start-Process -FilePath .\$Installer -ArgumentList "-s", "--toolkit" -Wait -NoNewWindow
+          }
+          echo "CUDA_PATH=$CudaPath" >> $env:GITHUB_ENV
+          $CudaBin = Join-Path $CudaPath "bin"
+          echo "PATH=$CudaBin;$env:PATH" >> $env:GITHUB_ENV
 
       - name: Install build tools
         shell: powershell
