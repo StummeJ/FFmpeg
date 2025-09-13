@@ -11,7 +11,7 @@ on:
       enable_nonfree:
         description: 'Enable non-free components'
         type: boolean
-        default: false
+        default: true
       enable_cuda_nvcc:
         description: 'Enable CUDA compiler support'
         type: boolean
@@ -43,7 +43,7 @@ on:
       enable_libaom:
         description: 'Enable AV1 codec'
         type: boolean
-        default: false
+        default: true
 
 env:
   CUDA_VERSION: "13.0"
