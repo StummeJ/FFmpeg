@@ -94,7 +94,20 @@ jobs:
             Invoke-WebRequest -Uri $CudaUrl -OutFile $Installer
           }
           if (!(Test-Path "$CudaPath\bin\nvcc.exe")) {
-            Start-Process -FilePath .\$Installer -ArgumentList "-s", "--toolkit" -Wait -NoNewWindow
+            $LogPath = "$env:RUNNER_TEMP\cuda_install.log"
+            Write-Host "Running CUDA installer, this may take several minutes..."
+            $proc = Start-Process -FilePath .\$Installer -ArgumentList "-s", "--toolkit", "--logfile=$LogPath" -PassThru
+            while (-not $proc.HasExited) {
+              Write-Host "CUDA installer still running..."
+              Start-Sleep -Seconds 60
+            }
+            if ($proc.ExitCode -ne 0) {
+              Write-Host "CUDA installation failed. Showing log:"
+              Get-Content $LogPath | Out-Host
+              exit $proc.ExitCode
+            }
+            Write-Host "CUDA installation finished. Last log lines:"
+            Get-Content $LogPath | Select-Object -Last 20 | Out-Host
           }
           echo "CUDA_PATH=$CudaPath" >> $env:GITHUB_ENV
           $CudaBin = Join-Path $CudaPath "bin"
