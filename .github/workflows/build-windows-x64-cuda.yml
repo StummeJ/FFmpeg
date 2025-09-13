@@ -1,3 +1,15 @@
+# FFmpeg Windows x64 Build Workflow with CUDA v13 Support
+# 
+# This workflow builds FFmpeg v8.0 for Windows x64 with NVIDIA CUDA acceleration.
+# It follows the development guidelines specified in .github/copilot-instructions.md
+# 
+# Key Features:
+# - CUDA v13.0 support optimized for RTX 3090/4090/5090
+# - Static linking for portability
+# - Comprehensive codec support with consolidated inputs (max 10 for GitHub Actions)
+# - Windows-compatible paths and MSYS2 build environment
+# - Validation testing for build quality assurance
+
 name: Build FFmpeg Windows x64 with CUDA
 
 on:
@@ -423,6 +435,34 @@ jobs:
         cd /home/runner/work/FFmpeg/FFmpeg
         make -j$(nproc)
         
+    - name: Validate FFmpeg Build
+      shell: msys2 {0}
+      run: |
+        cd /home/runner/work/FFmpeg/FFmpeg
+        
+        echo "=== Basic FFmpeg Validation ==="
+        # Test basic functionality as recommended in copilot instructions
+        ./ffmpeg.exe -version || { echo "FFmpeg version check failed"; exit 1; }
+        ./ffprobe.exe -version || { echo "FFprobe version check failed"; exit 1; }
+        
+        # Test basic processing capability
+        echo "Testing basic video processing..."
+        ./ffmpeg.exe -f lavfi -i testsrc=duration=1:size=320x240:rate=1 -f null - 2>/dev/null || { echo "Basic video processing test failed"; exit 1; }
+        
+        # Test CUDA support if enabled
+        if [ "${{ inputs.enable_cuda }}" = "true" ] && [ "$CUDA_FAILED" != "true" ]; then
+          echo "=== CUDA Hardware Acceleration Validation ==="
+          # List available encoders to verify CUDA support
+          ./ffmpeg.exe -hide_banner -encoders | grep nvenc && echo "NVENC encoder found" || echo "Warning: NVENC encoder not found"
+          ./ffmpeg.exe -hide_banner -decoders | grep cuvid && echo "CUVID decoder found" || echo "Warning: CUVID decoder not found"
+          
+          # Test CUDA encoding if GPU is available (will warn if no GPU)
+          echo "Testing CUDA encoding capability..."
+          ./ffmpeg.exe -f lavfi -i testsrc=duration=2:size=640x480:rate=1 -c:v h264_nvenc -preset fast -f null - 2>/dev/null && echo "CUDA encoding test passed" || echo "Warning: CUDA encoding test failed (no GPU available in CI)"
+        fi
+        
+        echo "Build validation completed successfully"
+        
     - name: Create portable package
       shell: msys2 {0}
       run: |
@@ -482,7 +522,7 @@ jobs:
         # Get FFmpeg version information
         FFMPEG_VERSION=$(./ffmpeg.exe -version 2>/dev/null | head -n1 || echo "FFmpeg version unknown")
         
-        # Create README with proper Windows line endings
+        # Create comprehensive README with proper Windows line endings
         {
           echo "FFmpeg Windows x64 Build with CUDA Support (v8.0)"
           echo "================================================="
@@ -498,9 +538,14 @@ jobs:
           echo "- Additional codecs: ${{ inputs.enable_additional_codecs }} (VP8/VP9, Opus, Vorbis, WebP)"
           echo "- CUDA: ${{ inputs.enable_cuda }} (version: ${{ inputs.cuda_version }})"
           echo ""
-          echo "Usage:"
+          echo "Quick Start:"
           echo "- Run ffmpeg.bat, ffprobe.bat, or ffplay.bat for the respective tools"
           echo "- Or add the 'dll' folder to your PATH and run the .exe files directly"
+          echo ""
+          echo "CUDA Hardware Acceleration:"
+          echo "- Test CUDA support: ffmpeg.exe -f lavfi -i testsrc=duration=5:size=1920x1080:rate=30 -c:v h264_nvenc test.mp4"
+          echo "- List CUDA devices: ffmpeg.exe -f lavfi -i nullsrc -c:v h264_nvenc -gpu list -f null -"
+          echo "- Hardware decoding: ffmpeg.exe -hwaccel cuda -hwaccel_output_format cuda -i input.mp4 output.mp4"
           echo ""
           echo "Built on: $(date)"
           echo "$FFMPEG_VERSION"
@@ -508,11 +553,17 @@ jobs:
           echo "System Requirements:"
           echo "- Windows 11 x64 or Windows 10 x64 (version 1909 or later)"
           echo "- For CUDA features: NVIDIA RTX 3090, RTX 4090, RTX 5090 or compatible GPU"
+          echo "- NVIDIA drivers supporting CUDA v${{ inputs.cuda_version }}"
           echo ""
           echo "Optimizations:"
           echo "- Built with CUDA v${{ inputs.cuda_version }} for optimal RTX 30xx/40xx/50xx series performance"
           echo "- Static linking for maximum portability"
           echo "- No additional runtime dependencies required"
+          echo "- Compiled following FFmpeg development guidelines in .github/copilot-instructions.md"
+          echo ""
+          echo "Development & Support:"
+          echo "- See .github/copilot-instructions.md for comprehensive build and development guides"
+          echo "- Includes Windows x64 build dependencies, CUDA setup, and troubleshooting"
           echo ""
           echo "Note: This build is statically linked and self-contained."
           echo "No additional installations are required on the target system."
@@ -555,10 +606,11 @@ jobs:
       shell: msys2 {0}
       run: |
         cd /home/runner/work/FFmpeg/FFmpeg
-        echo "=== Build Summary ==="
+        echo "=== FFmpeg Windows x64 CUDA Build Summary ==="
         echo "FFmpeg version: $(./ffmpeg.exe -version | head -n1)"
         echo "Build date: $(date)"
         echo "Built from: FFmpeg v8.0 release branch"
+        echo ""
         echo "Enabled features:"
         echo "- GPL: ${{ inputs.enable_gpl }}"
         echo "- Non-free: ${{ inputs.enable_nonfree }}"
@@ -570,7 +622,15 @@ jobs:
         echo "- MP3: ${{ inputs.enable_libmp3lame }}"
         echo "- Additional codecs: ${{ inputs.enable_additional_codecs }}"
         echo ""
-        echo "Optimized for NVIDIA RTX 3090, RTX 4090, RTX 5090"
-        echo "Artifact: ffmpeg-windows-x64-cuda.zip"
-        echo "Size: $(du -h ffmpeg-windows-x64-cuda.zip | cut -f1)"
-        echo "====================="
+        echo "Build specifications:"
+        echo "- Target platform: Windows x64"
+        echo "- Build system: MSYS2/MinGW64"
+        echo "- Optimized for: NVIDIA RTX 3090, RTX 4090, RTX 5090"
+        echo "- Build approach: Static linking for portability"
+        echo "- Development guidelines: .github/copilot-instructions.md"
+        echo ""
+        echo "Output artifact:"
+        echo "- Name: ffmpeg-windows-x64-cuda.zip"
+        echo "- Size: $(du -h ffmpeg-windows-x64-cuda.zip | cut -f1)"
+        echo "- Contains: ffmpeg.exe, ffprobe.exe, batch files, dependencies, README"
+        echo "============================================="
