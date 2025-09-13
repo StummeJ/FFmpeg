@@ -52,7 +52,7 @@ on:
       cuda_version:
         description: 'CUDA version to use'
         required: false
-        default: '12.6'
+        default: '13.0'
         type: string
 
 jobs:
@@ -92,8 +92,10 @@ jobs:
           $cudaVersion = "${{ inputs.cuda_version }}"
           Write-Host "Installing CUDA $cudaVersion..."
           
-          # Use a more reliable CUDA installation method
-          if ($cudaVersion -eq "12.6") {
+          # Use CUDA v13.0 installation
+          if ($cudaVersion -eq "13.0") {
+            $installerUrl = "https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_580.76_windows.exe"
+          } elseif ($cudaVersion -eq "12.6") {
             $installerUrl = "https://developer.download.nvidia.com/compute/cuda/12.6.0/local_installers/cuda_12.6.0_560.76_windows.exe"
           } else {
             $installerUrl = "https://developer.download.nvidia.com/compute/cuda/${cudaVersion}.0/local_installers/cuda_${cudaVersion}.0_windows.exe"
@@ -128,7 +130,7 @@ jobs:
     - name: Setup build environment
       shell: msys2 {0}
       run: |
-        # Create workspace
+        # Create workspace using Windows-compatible paths
         mkdir -p /c/ffmpeg-build
         cd /c/ffmpeg-build
         
@@ -304,10 +306,12 @@ jobs:
         
         # Copy CUDA libraries to our build directory if available
         mkdir -p /c/ffmpeg-build/lib
-        if [ -d "/c/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v${{ inputs.cuda_version }}/lib/x64" ]; then
-          cp "/c/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v${{ inputs.cuda_version }}/lib/x64"/*.lib /c/ffmpeg-build/lib/ || true
+        # Convert Windows path to MSYS2 path format
+        CUDA_LIB_PATH=$(cygpath "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v${{ inputs.cuda_version }}/lib/x64")
+        if [ -d "$CUDA_LIB_PATH" ]; then
+          cp "$CUDA_LIB_PATH"/*.lib /c/ffmpeg-build/lib/ || true
         else
-          echo "CUDA libraries not found, disabling CUDA features"
+          echo "CUDA libraries not found at $CUDA_LIB_PATH, disabling CUDA features"
           echo "CUDA_FAILED=true" >> $GITHUB_ENV
         fi
         
@@ -315,6 +319,7 @@ jobs:
       shell: msys2 {0}
       timeout-minutes: 15
       run: |
+        # Use proper Windows paths in MSYS2 environment
         cd /home/runner/work/FFmpeg/FFmpeg
         
         export PKG_CONFIG_PATH="/c/ffmpeg-build/lib/pkgconfig"
@@ -392,7 +397,9 @@ jobs:
         # CUDA acceleration
         if [ "${{ inputs.enable_cuda }}" = "true" ] && [ "$CUDA_FAILED" != "true" ]; then
           CONFIGURE_ARGS="$CONFIGURE_ARGS --enable-cuda-nvcc --enable-cuvid --enable-nvenc --enable-nvdec --enable-ffnvcodec"
-          export PATH="/c/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v${{ inputs.cuda_version }}/bin:$PATH"
+          # Convert Windows CUDA path to MSYS2 format
+          CUDA_BIN_PATH=$(cygpath "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v${{ inputs.cuda_version }}/bin")
+          export PATH="$CUDA_BIN_PATH:$PATH"
           echo "CUDA acceleration enabled"
         else
           echo "CUDA acceleration disabled"
@@ -412,12 +419,14 @@ jobs:
       shell: msys2 {0}
       timeout-minutes: 60
       run: |
+        # Use proper Windows paths in MSYS2 environment
         cd /home/runner/work/FFmpeg/FFmpeg
         make -j$(nproc)
         
     - name: Create portable package
       shell: msys2 {0}
       run: |
+        # Use proper Windows paths in MSYS2 environment
         cd /home/runner/work/FFmpeg/FFmpeg
         
         # Create package directory
@@ -449,60 +458,65 @@ jobs:
         copy_deps "ffprobe.exe"
         copy_deps "ffplay.exe"
         
-        # Create batch files for easy execution
+        # Create Windows batch files for easy execution
         cat > ffmpeg-windows-x64-cuda/ffmpeg.bat << 'EOF'
-        @echo off
-        set "PATH=%~dp0dll;%PATH%"
-        "%~dp0ffmpeg.exe" %*
-        EOF
+@echo off
+set "PATH=%~dp0dll;%PATH%"
+"%~dp0ffmpeg.exe" %*
+EOF
         
         cat > ffmpeg-windows-x64-cuda/ffprobe.bat << 'EOF'
-        @echo off
-        set "PATH=%~dp0dll;%PATH%"
-        "%~dp0ffprobe.exe" %*
-        EOF
+@echo off
+set "PATH=%~dp0dll;%PATH%"
+"%~dp0ffprobe.exe" %*
+EOF
         
         if [ -f ffmpeg-windows-x64-cuda/ffplay.exe ]; then
           cat > ffmpeg-windows-x64-cuda/ffplay.bat << 'EOF'
-        @echo off
-        set "PATH=%~dp0dll;%PATH%"
-        "%~dp0ffplay.exe" %*
-        EOF
+@echo off
+set "PATH=%~dp0dll;%PATH%"
+"%~dp0ffplay.exe" %*
+EOF
         fi
         
         # Get FFmpeg version information
         FFMPEG_VERSION=$(./ffmpeg.exe -version 2>/dev/null | head -n1 || echo "FFmpeg version unknown")
         
-        # Create README
+        # Create README with proper Windows line endings
         cat > ffmpeg-windows-x64-cuda/README.txt << EOF
-        FFmpeg Windows x64 Build with CUDA Support
-        ==========================================
-        
-        Build Configuration:
-        - GPL: ${{ inputs.enable_gpl }}
-        - Non-free: ${{ inputs.enable_nonfree }}
-        - x264: ${{ inputs.enable_libx264 }}
-        - x265: ${{ inputs.enable_libx265 }}
-        - AV1 codecs: ${{ inputs.enable_av1_codecs }} (libaom, SVT-AV1, dav1d)
-        - FDK-AAC: ${{ inputs.enable_libfdk_aac }}
-        - MP3 LAME: ${{ inputs.enable_libmp3lame }}
-        - Additional codecs: ${{ inputs.enable_additional_codecs }} (VP8/VP9, Opus, Vorbis, WebP)
-        - CUDA: ${{ inputs.enable_cuda }} (version: ${{ inputs.cuda_version }})
-        
-        Usage:
-        - Run ffmpeg.bat, ffprobe.bat, or ffplay.bat for the respective tools
-        - Or add the 'dll' folder to your PATH and run the .exe files directly
-        
-        Built on: $(date)
-        $FFMPEG_VERSION
-        
-        System Requirements:
-        - Windows 11 x64 or Windows 10 x64 (version 1909 or later)
-        - For CUDA features: NVIDIA GPU with CUDA support
-        
-        Note: This build is statically linked and self-contained.
-        No additional installations are required on the target system.
-        EOF
+FFmpeg Windows x64 Build with CUDA Support (v8.0)
+=================================================
+
+Build Configuration:
+- GPL: ${{ inputs.enable_gpl }}
+- Non-free: ${{ inputs.enable_nonfree }}
+- x264: ${{ inputs.enable_libx264 }}
+- x265: ${{ inputs.enable_libx265 }}
+- AV1 codecs: ${{ inputs.enable_av1_codecs }} (libaom, SVT-AV1, dav1d)
+- FDK-AAC: ${{ inputs.enable_libfdk_aac }}
+- MP3 LAME: ${{ inputs.enable_libmp3lame }}
+- Additional codecs: ${{ inputs.enable_additional_codecs }} (VP8/VP9, Opus, Vorbis, WebP)
+- CUDA: ${{ inputs.enable_cuda }} (version: ${{ inputs.cuda_version }})
+
+Usage:
+- Run ffmpeg.bat, ffprobe.bat, or ffplay.bat for the respective tools
+- Or add the 'dll' folder to your PATH and run the .exe files directly
+
+Built on: $(date)
+$FFMPEG_VERSION
+
+System Requirements:
+- Windows 11 x64 or Windows 10 x64 (version 1909 or later)
+- For CUDA features: NVIDIA RTX 3090, RTX 4090, RTX 5090 or compatible GPU
+
+Optimizations:
+- Built with CUDA v${{ inputs.cuda_version }} for optimal RTX 30xx/40xx/50xx series performance
+- Static linking for maximum portability
+- No additional runtime dependencies required
+
+Note: This build is statically linked and self-contained.
+No additional installations are required on the target system.
+EOF
         
         # Display build info
         echo "=== FFmpeg Build Information ==="
@@ -544,6 +558,7 @@ jobs:
         echo "=== Build Summary ==="
         echo "FFmpeg version: $(./ffmpeg.exe -version | head -n1)"
         echo "Build date: $(date)"
+        echo "Built from: FFmpeg v8.0 release branch"
         echo "Enabled features:"
         echo "- GPL: ${{ inputs.enable_gpl }}"
         echo "- Non-free: ${{ inputs.enable_nonfree }}"
@@ -555,6 +570,7 @@ jobs:
         echo "- MP3: ${{ inputs.enable_libmp3lame }}"
         echo "- Additional codecs: ${{ inputs.enable_additional_codecs }}"
         echo ""
+        echo "Optimized for NVIDIA RTX 3090, RTX 4090, RTX 5090"
         echo "Artifact: ffmpeg-windows-x64-cuda.zip"
         echo "Size: $(du -h ffmpeg-windows-x64-cuda.zip | cut -f1)"
         echo "====================="
