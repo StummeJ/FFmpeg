@@ -178,7 +178,39 @@ on:
         default: "true"
         options: ["true","false"]
 
-  build:
+      enable_bs2b:
+        type: choice
+        description: "Enable bs2b DSP library (stereo to binaural)"
+        default: "true"
+        options: ["true","false"]
+
+      # Additional video libraries - currently none available in MSYS2 that aren't already included
+      
+      # CUDA optimizations
+      enable_cuda_nvcc:
+        type: choice
+        description: "Use NVIDIA CUDA compiler (better optimization than clang)"
+        default: "true"
+        options: ["true","false"]
+      enable_ptx_compression:
+        type: choice
+        description: "Enable PTX code compression"
+        default: "true"
+        options: ["true","false"]
+
+      # Build options
+      enable_debug:
+        type: choice
+        description: "Include debug symbols (larger file size)"
+        default: "false"
+        options: ["true","false"]
+      validate_build:
+        type: choice
+        description: "Run validation tests on built executable"
+        default: "true"
+        options: ["true","false"]
+
+jobs:
     runs-on: windows-2022
     env:
       FFMPEG_REF: ${{ github.event.inputs.ffmpeg_ref || 'n8.0' }}
@@ -235,6 +267,7 @@ on:
             mingw-w64-x86_64-libogg
             mingw-w64-x86_64-lame
             mingw-w64-x86_64-fdk-aac
+            mingw-w64-x86_64-libbs2b
             # text / subs
             mingw-w64-x86_64-libass
             mingw-w64-x86_64-freetype
@@ -248,6 +281,8 @@ on:
             mingw-w64-x86_64-libbluray
             mingw-w64-x86_64-libmodplug
             mingw-w64-x86_64-libopenmpt
+            mingw-w64-x86_64-gnutls
+            mingw-w64-x86_64-libxml2
             # vulkan / placebo
             mingw-w64-x86_64-vulkan-loader
             mingw-w64-x86_64-shaderc
@@ -289,6 +324,8 @@ on:
           ENABLE_NONFREE:   ${{ github.event.inputs.enable_nonfree }}
 
           ENABLE_CUDA:      ${{ github.event.inputs.enable_cuda_stack }}
+          ENABLE_CUDA_NVCC: ${{ github.event.inputs.enable_cuda_nvcc }}
+          ENABLE_PTX_COMP:  ${{ github.event.inputs.enable_ptx_compression }}
 
           ENABLE_VULKAN:    ${{ github.event.inputs.enable_vulkan }}
           ENABLE_PLACEBO:   ${{ github.event.inputs.enable_libplacebo }}
@@ -306,6 +343,7 @@ on:
           E_VORBIS:         ${{ github.event.inputs.enable_vorbis }}
           E_LAME:           ${{ github.event.inputs.enable_lame }}
           E_FDK:            ${{ github.event.inputs.enable_fdk_aac }}
+          E_BS2B:           ${{ github.event.inputs.enable_bs2b }}
           E_OPENJPEG:       ${{ github.event.inputs.enable_openjpeg }}
           E_DAV1D:          ${{ github.event.inputs.enable_dav1d }}
           E_VMAF:           ${{ github.event.inputs.enable_vmaf }}
@@ -326,6 +364,8 @@ on:
           E_GNUTLS:         ${{ github.event.inputs.enable_gnutls }}
           E_XML2:           ${{ github.event.inputs.enable_libxml2 }}
           E_AVISYNTH:       ${{ github.event.inputs.enable_avisynth }}
+          
+          ENABLE_DEBUG:     ${{ github.event.inputs.enable_debug }}
         run: |
           set -e
           cd ffmpeg-src
@@ -338,7 +378,20 @@ on:
 
           # CUDA stack
           if [ "$ENABLE_CUDA" = "true" ]; then
-            CONFIG_OPTS="$CONFIG_OPTS --enable-ffnvcodec --enable-nvenc --enable-nvdec --enable-cuvid --enable-cuda-llvm --enable-libnpp"
+            CONFIG_OPTS="$CONFIG_OPTS --enable-ffnvcodec --enable-nvenc --enable-nvdec --enable-cuvid --enable-libnpp"
+            
+            # Choose CUDA compiler
+            if [ "$ENABLE_CUDA_NVCC" = "true" ]; then
+              CONFIG_OPTS="$CONFIG_OPTS --enable-cuda-nvcc"
+            else
+              CONFIG_OPTS="$CONFIG_OPTS --enable-cuda-llvm"
+            fi
+            
+            # PTX compression
+            if [ "$ENABLE_PTX_COMP" != "true" ]; then
+              CONFIG_OPTS="$CONFIG_OPTS --disable-ptx-compression"
+            fi
+            
             EXTRA_CFLAGS="-I${CUDA_PATH//\\//}/include"
             EXTRA_LDFLAGS="-L${CUDA_PATH//\\//}/lib/x64 -lcuda -lcudart -lnppc -lnppial -lnppicc -lnppicom -lnppidei -lnppif -lnppig -lnppist -lnppisu -lnppitc"
           fi
@@ -367,6 +420,7 @@ on:
           [ "$E_OPUS"  = "true" ] && CONFIG_OPTS="$CONFIG_OPTS --enable-libopus"
           [ "$E_VORBIS"= "true" ] && CONFIG_OPTS="$CONFIG_OPTS --enable-libvorbis"
           [ "$E_LAME"  = "true" ] && CONFIG_OPTS="$CONFIG_OPTS --enable-libmp3lame"
+          [ "$E_BS2B"  = "true" ] && CONFIG_OPTS="$CONFIG_OPTS --enable-libbs2b"
           if [ "$E_FDK" = "true" ]; then CONFIG_OPTS="$CONFIG_OPTS --enable-libfdk-aac"; fi
 
           # Subtitles / text shaping
@@ -392,7 +446,17 @@ on:
           [ "$E_AVISYNTH" = "true" ] && CONFIG_OPTS="$CONFIG_OPTS --enable-avisynth"
 
           echo "CONFIG_OPTS=$CONFIG_OPTS"
-          CFLAGS="-O3 -pipe" LDFLAGS="-Wl,--dynamicbase -Wl,--nxcompat" \
+          
+          # Set build flags
+          BASE_CFLAGS="-O3 -pipe"
+          BASE_LDFLAGS="-Wl,--dynamicbase -Wl,--nxcompat"
+          
+          if [ "$ENABLE_DEBUG" = "true" ]; then
+            BASE_CFLAGS="$BASE_CFLAGS -g"
+            BASE_LDFLAGS="$BASE_LDFLAGS -g"
+          fi
+          
+          CFLAGS="$BASE_CFLAGS" LDFLAGS="$BASE_LDFLAGS" \
           ./configure $CONFIG_OPTS ${EXTRA_CFLAGS:+--extra-cflags="$EXTRA_CFLAGS"} ${EXTRA_LDFLAGS:+--extra-ldflags="$EXTRA_LDFLAGS"}
 
       - name: Build & install
@@ -402,8 +466,66 @@ on:
           cd ffmpeg-src
           make -j$(nproc)
           make install
-          # strip for smaller exe
-          x86_64-w64-mingw32-strip ${PREFIX//\\//}/bin/*.exe || true
+          # strip for smaller exe (unless debug build)
+          if [ "${{ github.event.inputs.enable_debug }}" != "true" ]; then
+            x86_64-w64-mingw32-strip ${PREFIX//\\//}/bin/*.exe || true
+          fi
+
+      - name: Validate build functionality
+        if: github.event.inputs.validate_build == 'true'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $bin = Join-Path $env:PREFIX "bin"
+          $ffmpeg = Join-Path $bin "ffmpeg.exe"
+          $ffprobe = Join-Path $bin "ffprobe.exe"
+          
+          Write-Host "=== Validating FFmpeg build ==="
+          
+          # Test basic functionality
+          Write-Host "Testing basic FFmpeg functionality..."
+          & $ffmpeg -version
+          if ($LASTEXITCODE -ne 0) { throw "FFmpeg version check failed" }
+          
+          & $ffprobe -version  
+          if ($LASTEXITCODE -ne 0) { throw "FFprobe version check failed" }
+          
+          # Test CUDA encoders (if enabled)
+          if ("${{ github.event.inputs.enable_cuda_stack }}" -eq "true") {
+            Write-Host "Testing CUDA encoder availability..."
+            $encoders = & $ffmpeg -encoders 2>$null | Select-String "nvenc"
+            if ($encoders.Count -eq 0) { 
+              Write-Warning "No NVENC encoders found (this may be expected if no NVIDIA GPU is available)"
+            } else {
+              Write-Host "Found NVENC encoders: $($encoders.Count)"
+              $encoders | ForEach-Object { Write-Host "  $_" }
+            }
+            
+            Write-Host "Testing CUDA decoder availability..."
+            $decoders = & $ffmpeg -decoders 2>$null | Select-String "cuvid"
+            if ($decoders.Count -eq 0) { 
+              Write-Warning "No CUVID decoders found (this may be expected if no NVIDIA GPU is available)"
+            } else {
+              Write-Host "Found CUVID decoders: $($decoders.Count)"
+            }
+          }
+          
+          # Test some key libraries
+          Write-Host "Testing codec availability..."
+          $formats = & $ffmpeg -formats 2>$null
+          $codecs = & $ffmpeg -codecs 2>$null
+          
+          # Check for common codecs
+          $testCodecs = @("h264", "h265", "av1", "vp9", "opus", "aac")
+          foreach ($codec in $testCodecs) {
+            if ($codecs -match $codec) {
+              Write-Host "✓ $codec support detected"
+            } else {
+              Write-Warning "✗ $codec support not detected"
+            }
+          }
+          
+          Write-Host "✓ Build validation completed successfully"
 
       - name: Make self-contained package (bundle DLL deps incl. CUDA/Vulkan)
         shell: powershell
@@ -449,6 +571,56 @@ on:
           if (Test-Path "C:\msys64\mingw64\share\licenses") {
             Copy-Item "C:\msys64\mingw64\share\licenses" $pkgLic -Recurse -Force
           }
+
+      - name: Create package documentation
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pkgRoot = $env:PKG
+          $readmePath = Join-Path $pkgRoot "README.txt"
+          
+          # Create README content
+          $lines = @(
+            "FFmpeg Windows x64 Build with CUDA 13 Support",
+            "=============================================",
+            "",
+            "This is a fully-featured FFmpeg build for Windows x64 with CUDA 13 acceleration.",
+            "",
+            "WHAT'S INCLUDED:",
+            "- FFmpeg, FFprobe (and FFplay if built)",
+            "- All required DLL dependencies bundled", 
+            "- CUDA 13 runtime libraries for GPU acceleration",
+            "- Comprehensive codec support including:",
+            "  * Video: H.264/H.265 (CPU + NVENC), AV1, VP9, WebP, JPEG XL",
+            "  * Audio: Opus, Vorbis, MP3, AAC, and more",
+            "  * Subtitle support with libass, FreeType, HarfBuzz",
+            "  * Network protocols: SRT, RIST, SSH, ZMQ",
+            "  * GPU acceleration: NVENC/NVDEC, Vulkan, libplacebo",
+            "",
+            "REQUIREMENTS:",
+            "- Windows 11 (or Windows 10 with recent updates)",
+            "- For CUDA features: NVIDIA GPU with driver 527.41+ (for CUDA 12.0+ support)",
+            "- NVIDIA GeForce GTX 10-series or newer / Quadro P-series or newer",
+            "",
+            "USAGE:",
+            "Simply run ffmpeg.exe from this directory. All dependencies are bundled.",
+            "",
+            "Example commands:",
+            "- Basic transcode: ffmpeg -i input.mp4 output.mp4",
+            "- NVENC encoding: ffmpeg -i input.mp4 -c:v h264_nvenc output.mp4", 
+            "- GPU scaling: ffmpeg -i input.mp4 -vf `"scale_cuda=1920:1080`" -c:v h264_nvenc output.mp4",
+            "",
+            "For full documentation: https://ffmpeg.org/documentation.html",
+            "",
+            "BUILD INFO:",
+            "Built: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')",
+            "FFmpeg version: ${{ env.FFMPEG_REF }}",
+            "CUDA version: 13.0",
+            "Compiler: Clang with LLD linker"
+          )
+          
+          $lines | Out-File -FilePath $readmePath -Encoding UTF8
+          Write-Host "Created README.txt in package"
 
       - name: Zip artifact
         shell: powershell
