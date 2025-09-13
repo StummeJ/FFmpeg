@@ -269,11 +269,11 @@ jobs:
           
           # Create a batch file that sets up MSVC environment and runs configure
           $configureArgs = $CONFIGURE_OPTS -join ' '
-          $batchContent = @"
-@echo off
-call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-bash -c "./configure $configureArgs"
-"@
+          $batchContent = @(
+            "@echo off",
+            "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`"",
+            "bash -c `"./configure $configureArgs`""
+          ) -join "`r`n"
           $batchContent | Out-File -FilePath "configure_with_msvc.bat" -Encoding ascii
           
           # Run the batch file
@@ -282,11 +282,11 @@ bash -c "./configure $configureArgs"
       - name: Build FFmpeg
         run: |
           # Create a batch file that sets up MSVC environment and runs make
-          $batchContent = @"
-@echo off
-call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-make "-j%NUMBER_OF_PROCESSORS%"
-"@
+          $batchContent = @(
+            "@echo off",
+            "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`"",
+            "make `"-j%NUMBER_OF_PROCESSORS%`""
+          ) -join "`r`n"
           $batchContent | Out-File -FilePath "build_with_msvc.bat" -Encoding ascii
           
           # Run the batch file
@@ -295,12 +295,12 @@ make "-j%NUMBER_OF_PROCESSORS%"
       - name: Build Examples and Tools
         run: |
           # Create a batch file that sets up MSVC environment and runs make
-          $batchContent = @"
-@echo off
-call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-make examples
-make alltools
-"@
+          $batchContent = @(
+            "@echo off",
+            "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`"",
+            "make examples",
+            "make alltools"
+          ) -join "`r`n"
           $batchContent | Out-File -FilePath "build_examples_with_msvc.bat" -Encoding ascii
           
           # Run the batch file
@@ -354,71 +354,59 @@ make alltools
           Get-ChildItem -Path "tools\*.exe" | Copy-Item -Destination "ffmpeg-windows-x64-cuda13\tools\" -ErrorAction SilentlyContinue
           
           # Create build info
-          @"
-          FFmpeg Windows x64 CUDA v13 Build Information
-          =============================================
-          
-          Build Date: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
-          Git Commit: ${{ github.sha }}
-          Runner OS: ${{ runner.os }}
-          
-          Configuration Options:
-          - GPL Components: ${{ github.event.inputs.enable_gpl || 'true' }}
-          - Non-free Components: ${{ github.event.inputs.enable_nonfree || 'false' }}
-          - CUDA Compiler: ${{ github.event.inputs.enable_cuda_nvcc || 'true' }}
-          - NVENC Hardware Encoding: ${{ github.event.inputs.enable_nvenc || 'true' }}
-          - NVDEC Hardware Decoding: ${{ github.event.inputs.enable_nvdec || 'true' }}
-          - x264 Encoder: ${{ github.event.inputs.enable_libx264 || 'true' }}
-          - x265 Encoder: ${{ github.event.inputs.enable_libx265 || 'true' }}
-          - Opus Codec: ${{ github.event.inputs.enable_libopus || 'true' }}
-          - VP8/VP9 Codecs: ${{ github.event.inputs.enable_libvpx || 'true' }}
-          - AV1 Codec: ${{ github.event.inputs.enable_libaom || 'false' }}
-          
-          Hardware Support:
-          - NVIDIA CUDA SDK v13.0
-          - Optimized for RTX 3090, 4090, 5090 GPUs
-          - Compute Capability 8.6+
-          
-          Usage:
-          1. Extract all files to a directory
-          2. Ensure NVIDIA GPU drivers are installed (v520.61.05 or later)
-          3. Run ffmpeg.exe directly - no additional installation required
-          
-          Examples:
-          - Hardware-accelerated encoding: ffmpeg.exe -f lavfi -i testsrc -c:v h264_nvenc output.mp4
-          - Hardware-accelerated decoding: ffmpeg.exe -hwaccel cuda -i input.mp4 -c:v h264_nvenc output.mp4
-          - List CUDA devices: ffmpeg.exe -f lavfi -i nullsrc -c:v h264_nvenc -gpu list -f null -
-          "@| Out-File -FilePath "ffmpeg-windows-x64-cuda13\BUILD_INFO.txt" -Encoding utf8
+          $buildDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC"
+          $buildInfo = "FFmpeg Windows x64 CUDA v13 Build Information`r`n"
+          $buildInfo += "=============================================`r`n`r`n"
+          $buildInfo += "Build Date: $buildDate`r`n"
+          $buildInfo += "Git Commit: ${{ github.sha }}`r`n"
+          $buildInfo += "Runner OS: ${{ runner.os }}`r`n`r`n"
+          $buildInfo += "Configuration Options:`r`n"
+          $buildInfo += "- GPL Components: ${{ github.event.inputs.enable_gpl || 'true' }}`r`n"
+          $buildInfo += "- Non-free Components: ${{ github.event.inputs.enable_nonfree || 'false' }}`r`n"
+          $buildInfo += "- CUDA Compiler: ${{ github.event.inputs.enable_cuda_nvcc || 'true' }}`r`n"
+          $buildInfo += "- NVENC Hardware Encoding: ${{ github.event.inputs.enable_nvenc || 'true' }}`r`n"
+          $buildInfo += "- NVDEC Hardware Decoding: ${{ github.event.inputs.enable_nvdec || 'true' }}`r`n"
+          $buildInfo += "- x264 Encoder: ${{ github.event.inputs.enable_libx264 || 'true' }}`r`n"
+          $buildInfo += "- x265 Encoder: ${{ github.event.inputs.enable_libx265 || 'true' }}`r`n"
+          $buildInfo += "- Opus Codec: ${{ github.event.inputs.enable_libopus || 'true' }}`r`n"
+          $buildInfo += "- VP8/VP9 Codecs: ${{ github.event.inputs.enable_libvpx || 'true' }}`r`n"
+          $buildInfo += "- AV1 Codec: ${{ github.event.inputs.enable_libaom || 'false' }}`r`n`r`n"
+          $buildInfo += "Hardware Support:`r`n"
+          $buildInfo += "- NVIDIA CUDA SDK v13.0`r`n"
+          $buildInfo += "- Optimized for RTX 3090, 4090, 5090 GPUs`r`n"
+          $buildInfo += "- Compute Capability 8.6+`r`n`r`n"
+          $buildInfo += "Usage:`r`n"
+          $buildInfo += "1. Extract all files to a directory`r`n"
+          $buildInfo += "2. Ensure NVIDIA GPU drivers are installed (v520.61.05 or later)`r`n"
+          $buildInfo += "3. Run ffmpeg.exe directly - no additional installation required`r`n`r`n"
+          $buildInfo += "Examples:`r`n"
+          $buildInfo += "- Hardware-accelerated encoding: ffmpeg.exe -f lavfi -i testsrc -c:v h264_nvenc output.mp4`r`n"
+          $buildInfo += "- Hardware-accelerated decoding: ffmpeg.exe -hwaccel cuda -i input.mp4 -c:v h264_nvenc output.mp4`r`n"
+          $buildInfo += "- List CUDA devices: ffmpeg.exe -f lavfi -i nullsrc -c:v h264_nvenc -gpu list -f null -`r`n"
+          $buildInfo | Out-File -FilePath "ffmpeg-windows-x64-cuda13\BUILD_INFO.txt" -Encoding utf8
           
           # Create README
-          @"
-          # FFmpeg Windows x64 CUDA v13 Build
-          
-          This is a self-contained FFmpeg build with NVIDIA CUDA v13 hardware acceleration support.
-          
-          ## Requirements
-          - Windows 10/11 x64
-          - NVIDIA GPU with Compute Capability 8.6+ (RTX 3090, 4090, 5090)
-          - NVIDIA GPU drivers v520.61.05 or later
-          
-          ## Quick Start
-          1. Extract all files to a directory
-          2. Open Command Prompt or PowerShell in that directory
-          3. Run: `ffmpeg.exe -version` to verify installation
-          
-          ## Hardware Acceleration
-          This build includes NVENC (encoding) and NVDEC (decoding) support for:
-          - H.264/AVC
-          - H.265/HEVC
-          - AV1 (encoding on supported GPUs)
-          
-          Use `-c:v h264_nvenc` for H.264 hardware encoding
-          Use `-hwaccel cuda` for hardware-accelerated decoding
-          
-          ## Support
-          For FFmpeg documentation: https://ffmpeg.org/documentation.html
-          For NVIDIA hardware acceleration: https://developer.nvidia.com/ffmpeg
-          "@| Out-File -FilePath "ffmpeg-windows-x64-cuda13\README.md" -Encoding utf8
+          $readmeContent = "# FFmpeg Windows x64 CUDA v13 Build`r`n`r`n"
+          $readmeContent += "This is a self-contained FFmpeg build with NVIDIA CUDA v13 hardware acceleration support.`r`n`r`n"
+          $readmeContent += "## Requirements`r`n"
+          $readmeContent += "- Windows 10/11 x64`r`n"
+          $readmeContent += "- NVIDIA GPU with Compute Capability 8.6+ (RTX 3090, 4090, 5090)`r`n"
+          $readmeContent += "- NVIDIA GPU drivers v520.61.05 or later`r`n`r`n"
+          $readmeContent += "## Quick Start`r`n"
+          $readmeContent += "1. Extract all files to a directory`r`n"
+          $readmeContent += "2. Open Command Prompt or PowerShell in that directory`r`n"
+          $readmeContent += "3. Run: ``ffmpeg.exe -version`` to verify installation`r`n`r`n"
+          $readmeContent += "## Hardware Acceleration`r`n"
+          $readmeContent += "This build includes NVENC (encoding) and NVDEC (decoding) support for:`r`n"
+          $readmeContent += "- H.264/AVC`r`n"
+          $readmeContent += "- H.265/HEVC`r`n"
+          $readmeContent += "- AV1 (encoding on supported GPUs)`r`n`r`n"
+          $readmeContent += "Use ``-c:v h264_nvenc`` for H.264 hardware encoding`r`n"
+          $readmeContent += "Use ``-hwaccel cuda`` for hardware-accelerated decoding`r`n`r`n"
+          $readmeContent += "## Support`r`n"
+          $readmeContent += "For FFmpeg documentation: https://ffmpeg.org/documentation.html`r`n"
+          $readmeContent += "For NVIDIA hardware acceleration: https://developer.nvidia.com/ffmpeg`r`n"
+          $readmeContent | Out-File -FilePath "ffmpeg-windows-x64-cuda13\README.md" -Encoding utf8
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
