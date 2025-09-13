@@ -30,6 +30,16 @@ The offline documentation is available in the **doc/** directory.
 The online documentation is available in the main [website](https://ffmpeg.org)
 and in the [wiki](https://trac.ffmpeg.org).
 
+### Windows x64 CUDA Build
+
+This repository includes an automated GitHub Actions workflow to build a fully-featured FFmpeg executable for Windows x64 with CUDA 13 acceleration. See [docs/Windows-CUDA-Build.md](docs/Windows-CUDA-Build.md) for complete instructions.
+
+**Quick Start:**
+1. Go to Actions → "build-ffmpeg-windows-cuda13-full" 
+2. Click "Run workflow"
+3. Wait ~30-45 minutes for completion
+4. Download the self-contained Windows executable package
+
 ### Examples
 
 Coding examples are available in the **doc/examples** directory.
