@@ -90,6 +90,15 @@ jobs:
             throw "CUDA SDK installation failed"
           }
 
+      - name: Save CUDA Cache
+        if: steps.cache-cuda.outputs.cache-hit != 'true' && (success() || failure())
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0
+            C:\Program Files\NVIDIA Corporation\Nsight*
+          key: cuda-v13.0-${{ runner.os }}
+
       - name: Setup CUDA Environment
         run: |
           $env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0"
@@ -121,6 +130,15 @@ jobs:
           Write-Host "Installing YASM ${{ env.YASM_VERSION }}..."
           New-Item -Path "C:\tools\yasm" -ItemType Directory -Force
           Invoke-WebRequest -Uri "http://www.tortall.net/projects/yasm/releases/yasm-${{ env.YASM_VERSION }}-win64.exe" -OutFile "C:\tools\yasm\yasm.exe"
+
+      - name: Save Build Tools Cache
+        if: steps.cache-tools.outputs.cache-hit != 'true' && (success() || failure())
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            C:\tools\nasm
+            C:\tools\yasm
+          key: build-tools-nasm-${{ env.NASM_VERSION }}-yasm-${{ env.YASM_VERSION }}
 
       - name: Setup Build Tools Path
         run: |
@@ -171,6 +189,17 @@ jobs:
             .\vcpkg.exe install aom:x64-windows-static
           }
 
+      - name: Save vcpkg Cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ env.VCPKG_ROOT }}
+            ${{ env.VCPKG_ROOT }}/installed
+            ${{ env.VCPKG_ROOT }}/buildtrees
+            ${{ env.VCPKG_ROOT }}/packages
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', '**/vcpkg.json') }}-${{ github.run_id }}
+
       - name: Configure FFmpeg Build
         run: |
           # Setup MSVC environment variables for this PowerShell session
@@ -180,28 +209,44 @@ jobs:
             }
           }
           
+          # Use forward slashes for Unix-style paths in configure script
+          $CUDA_INCLUDE = $env:CUDA_PATH -replace '\\', '/'
+          $CUDA_LIB = $env:CUDA_PATH -replace '\\', '/'
+          $VCPKG_INCLUDE = "${{ env.VCPKG_ROOT }}\installed\x64-windows-static\include" -replace '\\', '/'
+          $VCPKG_LIB = "${{ env.VCPKG_ROOT }}\installed\x64-windows-static\lib" -replace '\\', '/'
+          
           $CONFIGURE_OPTS = @(
             "--toolchain=msvc",
             "--arch=x86_64", 
             "--prefix=./build/x64",
-            "--extra-cflags=-I`"$env:CUDA_PATH\include`"",
-            "--extra-ldflags=-L`"$env:CUDA_PATH\lib\x64`"",
+            "--extra-cflags=-I`"$CUDA_INCLUDE/include`"",
+            "--extra-ldflags=-L`"$CUDA_LIB/lib/x64`"",
             "--extra-libs=cuda.lib",
             "--extra-libs=cudart.lib", 
             "--extra-libs=cufft.lib",
             "--extra-libs=curand.lib",
             "--extra-libs=cublas.lib",
             "--pkg-config-flags=--static",
-            "--extra-cflags=-I`"${{ env.VCPKG_ROOT }}\installed\x64-windows-static\include`"",
-            "--extra-ldflags=-L`"${{ env.VCPKG_ROOT }}\installed\x64-windows-static\lib`""
+            "--extra-cflags=-I`"$VCPKG_INCLUDE`"",
+            "--extra-ldflags=-L`"$VCPKG_LIB`""
           )
           
           if ("${{ github.event.inputs.enable_gpl || 'true' }}" -eq "true") {
             $CONFIGURE_OPTS += "--enable-gpl"
           }
-          if ("${{ github.event.inputs.enable_nonfree || 'false' }}" -eq "true") {
+          
+          # Auto-enable nonfree when CUDA features are enabled
+          $enable_cuda_features = @(
+            "${{ github.event.inputs.enable_cuda_nvcc || 'true' }}",
+            "${{ github.event.inputs.enable_nvenc || 'true' }}",
+            "${{ github.event.inputs.enable_nvdec || 'true' }}"
+          )
+          $cuda_enabled = $enable_cuda_features -contains "true"
+          
+          if ("${{ github.event.inputs.enable_nonfree || 'false' }}" -eq "true" -or $cuda_enabled) {
             $CONFIGURE_OPTS += "--enable-nonfree"
           }
+          
           if ("${{ github.event.inputs.enable_cuda_nvcc || 'true' }}" -eq "true") {
             $CONFIGURE_OPTS += "--enable-cuda-nvcc", "--enable-cuda-llvm"
           }
@@ -229,8 +274,9 @@ jobs:
           
           Write-Host "Configuring with options: $($CONFIGURE_OPTS -join ' ')"
           
-          # Use bash to run the configure script
-          & bash configure ($CONFIGURE_OPTS)
+          # Use bash to run the configure script with proper argument handling
+          $configureArgs = $CONFIGURE_OPTS -join ' '
+          bash -c "./configure $configureArgs"
 
       - name: Build FFmpeg
         run: |
