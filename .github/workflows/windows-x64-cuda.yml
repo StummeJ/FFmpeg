@@ -1,8 +1,7 @@
 name: Windows x64 CUDA v13 Build
 
 on:
-  push:
-    branches: [ main, master, 'release/8.0' ]
+  push: 
   workflow_dispatch:
     inputs:
       enable_gpl:
