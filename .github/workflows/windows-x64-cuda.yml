@@ -165,32 +165,40 @@ jobs:
           .\vcpkg.exe integrate install
 
       - name: Install Dependencies via vcpkg
+        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
         run: |
           cd ${{ env.VCPKG_ROOT }}
           
           # Base dependencies
+          Write-Host "Installing base dependencies..."
           .\vcpkg.exe install zlib:x64-windows-static
           .\vcpkg.exe install openssl:x64-windows-static
           
           # Conditional dependencies based on inputs
+          Write-Host "Installing conditional dependencies..."
           if ("${{ github.event.inputs.enable_libopus || 'true' }}" -eq "true") {
+            Write-Host "Installing Opus..."
             .\vcpkg.exe install opus:x64-windows-static
           }
           if ("${{ github.event.inputs.enable_libx264 || 'true' }}" -eq "true") {
+            Write-Host "Installing x264..."
             .\vcpkg.exe install x264:x64-windows-static
           }
           if ("${{ github.event.inputs.enable_libx265 || 'true' }}" -eq "true") {
+            Write-Host "Installing x265..."
             .\vcpkg.exe install x265:x64-windows-static
           }
           if ("${{ github.event.inputs.enable_libvpx || 'true' }}" -eq "true") {
+            Write-Host "Installing libvpx..."
             .\vcpkg.exe install libvpx:x64-windows-static
           }
           if ("${{ github.event.inputs.enable_libaom || 'false' }}" -eq "true") {
+            Write-Host "Installing AOM..."
             .\vcpkg.exe install aom:x64-windows-static
           }
 
       - name: Save vcpkg Cache
-        if: always()
+        if: steps.cache-vcpkg.outputs.cache-hit != 'true' && (success() || failure())
         uses: actions/cache/save@v4
         with:
           path: |
@@ -198,7 +206,7 @@ jobs:
             ${{ env.VCPKG_ROOT }}/installed
             ${{ env.VCPKG_ROOT }}/buildtrees
             ${{ env.VCPKG_ROOT }}/packages
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', '**/vcpkg.json') }}-${{ github.run_id }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', '**/vcpkg.json') }}
 
       - name: Configure FFmpeg Build
         run: |
@@ -221,7 +229,10 @@ jobs:
             "--extra-libs=cublas.lib",
             "--pkg-config-flags=--static",
             "--extra-cflags=-I`"$VCPKG_INCLUDE`"",
-            "--extra-ldflags=-L`"$VCPKG_LIB`""
+            "--extra-ldflags=-L`"$VCPKG_LIB`"",
+            "--disable-w32threads",
+            "--enable-shared",
+            "--disable-static"
           )
           
           if ("${{ github.event.inputs.enable_gpl || 'true' }}" -eq "true") {
@@ -278,6 +289,18 @@ jobs:
           
           # Run the batch file
           cmd.exe /c configure_with_msvc.bat
+          
+          # Display configuration summary
+          Write-Host ""
+          Write-Host "=============================================="
+          Write-Host "Configuration completed. Summary:"
+          Write-Host "=============================================="
+          if (Test-Path "ffbuild/config.h") {
+            Write-Host "Checking enabled features:"
+            bash -c "grep -E 'HAVE_(CUDA|NVENC|NVDEC|CUVID)' ffbuild/config.h | head -10" 2>$null
+            bash -c "grep -E 'CONFIG_(LIBX264|LIBX265|LIBOPUS|LIBVPX|LIBAOM)' ffbuild/config.h | head -10" 2>$null
+          }
+          Write-Host "=============================================="
 
       - name: Build FFmpeg
         run: |
@@ -285,7 +308,14 @@ jobs:
           $batchContent = @(
             "@echo off",
             "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`"",
-            "make `"-j%NUMBER_OF_PROCESSORS%`""
+            "echo Building FFmpeg with parallel compilation...",
+            "make `"-j%NUMBER_OF_PROCESSORS%`"",
+            "echo.",
+            "echo Build completed, checking for main executables...",
+            "if not exist ffmpeg.exe echo WARNING: ffmpeg.exe not found!",
+            "if not exist ffprobe.exe echo WARNING: ffprobe.exe not found!",
+            "if exist ffmpeg.exe echo ffmpeg.exe: OK",
+            "if exist ffprobe.exe echo ffprobe.exe: OK"
           ) -join "`r`n"
           $batchContent | Out-File -FilePath "build_with_msvc.bat" -Encoding ascii
           
