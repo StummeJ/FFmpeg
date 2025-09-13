@@ -1,0 +1,201 @@
+name: Windows CUDA Build
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      enable-nvenc:
+        description: "Enable NVIDIA NVENC encoder"
+        required: false
+        default: true
+        type: boolean
+      enable-cuvid:
+        description: "Enable NVIDIA CUVID decoder"
+        required: false
+        default: true
+        type: boolean
+      enable-vulkan:
+        description: "Enable Vulkan support"
+        required: false
+        default: false
+        type: boolean
+      enable-sdl2:
+        description: "Enable SDL2 for ffplay"
+        required: false
+        default: false
+        type: boolean
+      enable-libx264:
+        description: "Enable H.264 via libx264"
+        required: false
+        default: true
+        type: boolean
+      enable-libx265:
+        description: "Enable HEVC via libx265"
+        required: false
+        default: true
+        type: boolean
+      enable-libvpx:
+        description: "Enable VP8/VP9 via libvpx"
+        required: false
+        default: true
+        type: boolean
+      enable-libopus:
+        description: "Enable Opus codec"
+        required: false
+        default: true
+        type: boolean
+      enable-libwebp:
+        description: "Enable WebP codec"
+        required: false
+        default: true
+        type: boolean
+      enable-libass:
+        description: "Enable libass subtitles"
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    runs-on: windows-2022
+    env:
+      VCPKG_ROOT: '${{ github.workspace }}\\vcpkg'
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          ref: release/8.0
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+
+      - name: Cache CUDA installer
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: cuda_13.0.0_windows.exe
+          key: cuda-installer-13.0.0
+
+      - name: Cache CUDA toolkit folders
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0
+            C:/Program Files/NVIDIA Corporation/Nsight*
+          key: cuda-folders-${{ runner.os }}-13.0.0
+
+      - name: Install CUDA Toolkit
+        shell: powershell
+        run: |
+          $CudaUrl = "https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe"
+          $Installer = "cuda_13.0.0_windows.exe"
+          $CudaPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0"
+          if (!(Test-Path $Installer)) {
+            Invoke-WebRequest -Uri $CudaUrl -OutFile $Installer
+          }
+          if (!(Test-Path "$CudaPath\bin\nvcc.exe")) {
+            $LogPath = "$env:RUNNER_TEMP\cuda_install.log"
+            Write-Host "Running CUDA installer, this may take several minutes..."
+            $proc = Start-Process -FilePath .\$Installer -ArgumentList "-s", "--toolkit", "--logfile=$LogPath" -PassThru
+            while (-not $proc.HasExited) {
+              Write-Host "CUDA installer still running..."
+              Start-Sleep -Seconds 60
+            }
+            if ($proc.ExitCode -ne 0) {
+              Write-Host "CUDA installation failed. Showing log:"
+              Get-Content $LogPath | Out-Host
+              exit $proc.ExitCode
+            }
+            Write-Host "CUDA installation finished. Last log lines:"
+            Get-Content $LogPath | Select-Object -Last 20 | Out-Host
+          }
+          echo "CUDA_PATH=$CudaPath" >> $env:GITHUB_ENV
+          $CudaBin = Join-Path $CudaPath "bin"
+          echo "PATH=$CudaBin;$env:PATH" >> $env:GITHUB_ENV
+
+      - name: Install build tools
+        shell: powershell
+        run: |
+          choco install -y --no-progress nasm --version=2.16.01
+          choco install -y --no-progress yasm --version=1.3.0
+          choco install -y --no-progress cmake --version=3.28.3
+          choco install -y --no-progress pkgconfiglite --version=0.28
+          choco install -y --no-progress ninja --version=1.11.1
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@76b1bed68bac51ebe46cb431077217d4b98e2b7b
+        with:
+          msystem: MINGW64
+          update: true
+          cache: true
+          install: >-
+            base-devel
+            make
+            diffutils
+            pkg-config
+
+      - name: Clone vcpkg
+        shell: powershell
+        run: git clone https://github.com/microsoft/vcpkg "$env:VCPKG_ROOT" --depth 1 --branch 2024.05.10
+
+      - name: Cache vcpkg
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: |
+            ${{ env.VCPKG_ROOT }}\installed
+            ${{ env.VCPKG_ROOT }}\downloads
+          key: vcpkg-${{ runner.os }}-20240510
+
+      - name: Setup vcpkg
+        shell: powershell
+        run: |
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat"
+          & "$env:VCPKG_ROOT\vcpkg.exe" integrate install
+          & "$env:VCPKG_ROOT\vcpkg.exe" install zlib:x64-windows@1.3.1 openssl:x64-windows@3.3.0 opus:x64-windows@1.4 x264:x64-windows@20240210 x265:x64-windows@3.5 libvpx:x64-windows@1.14.0 libwebp:x64-windows@1.4.0 libass:x64-windows@0.17.1
+
+      - name: Configure FFmpeg
+        shell: msys2 {0}
+        run: |
+          export PKG_CONFIG_PATH="$VCPKG_ROOT/installed/x64-windows/lib/pkgconfig"
+          ./configure \
+            --toolchain=msvc \
+            --arch=x86_64 \
+            --enable-gpl \
+            --enable-version3 \
+            --enable-nonfree \
+            --enable-static \
+            --disable-shared \
+            --pkg-config=pkg-config \
+            --extra-cflags="-I$CUDA_PATH/include" \
+            --extra-ldflags="-L$CUDA_PATH/lib/x64" \
+            --nvccflags="-gencode=arch=compute_86,code=sm_86 -gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_90,code=sm_90" \
+            --enable-cuda-nvcc \
+            --enable-cuda-llvm \
+            --enable-libnpp \
+            $(if [ "${{ github.event.inputs.enable-nvenc }}" = "true" ]; then echo --enable-nvenc; fi) \
+            $(if [ "${{ github.event.inputs.enable-cuvid }}" = "true" ]; then echo --enable-cuvid --enable-nvdec; fi) \
+            $(if [ "${{ github.event.inputs.enable-vulkan }}" = "true" ]; then echo --enable-vulkan; fi) \
+            $(if [ "${{ github.event.inputs.enable-sdl2 }}" = "true" ]; then echo --enable-sdl2; fi) \
+            $(if [ "${{ github.event.inputs.enable-libx264 }}" = "true" ]; then echo --enable-libx264; fi) \
+            $(if [ "${{ github.event.inputs.enable-libx265 }}" = "true" ]; then echo --enable-libx265; fi) \
+            $(if [ "${{ github.event.inputs.enable-libvpx }}" = "true" ]; then echo --enable-libvpx; fi) \
+            $(if [ "${{ github.event.inputs.enable-libopus }}" = "true" ]; then echo --enable-libopus; fi) \
+            $(if [ "${{ github.event.inputs.enable-libwebp }}" = "true" ]; then echo --enable-libwebp; fi) \
+            $(if [ "${{ github.event.inputs.enable-libass }}" = "true" ]; then echo --enable-libass; fi)
+
+      - name: Build FFmpeg
+        shell: msys2 {0}
+        run: make -j$(nproc)
+
+      - name: Package binaries
+        shell: msys2 {0}
+        run: |
+          mkdir -p dist/bin
+          cp ffmpeg.exe ffprobe.exe dist/bin/
+          7z a ffmpeg-win64-cuda13.zip dist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ffmpeg-win64-cuda13
+          path: ffmpeg-win64-cuda13.zip
