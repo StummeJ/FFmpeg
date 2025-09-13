@@ -14,32 +14,17 @@ on:
         default: 'true'
         type: boolean
       enable_libx264:
-        description: 'Enable x264 encoder'
+        description: 'Enable x264 H.264 encoder'
         required: false
         default: 'true'
         type: boolean
       enable_libx265:
-        description: 'Enable x265/HEVC encoder'
+        description: 'Enable x265 HEVC encoder'
         required: false
         default: 'true'
         type: boolean
-      enable_libvpx:
-        description: 'Enable VP8/VP9 encoder'
-        required: false
-        default: 'true'
-        type: boolean
-      enable_libaom:
-        description: 'Enable AV1 encoder'
-        required: false
-        default: 'true'
-        type: boolean
-      enable_libsvtav1:
-        description: 'Enable SVT-AV1 encoder'
-        required: false
-        default: 'true'
-        type: boolean
-      enable_libdav1d:
-        description: 'Enable dav1d AV1 decoder'
+      enable_av1_codecs:
+        description: 'Enable AV1 codecs (libaom, SVT-AV1, dav1d)'
         required: false
         default: 'true'
         type: boolean
@@ -49,22 +34,12 @@ on:
         default: 'true'
         type: boolean
       enable_libmp3lame:
-        description: 'Enable MP3 encoder'
+        description: 'Enable MP3 LAME encoder'
         required: false
         default: 'true'
         type: boolean
-      enable_libopus:
-        description: 'Enable Opus encoder'
-        required: false
-        default: 'true'
-        type: boolean
-      enable_libvorbis:
-        description: 'Enable Vorbis encoder'
-        required: false
-        default: 'true'
-        type: boolean
-      enable_libwebp:
-        description: 'Enable WebP encoder'
+      enable_additional_codecs:
+        description: 'Enable additional codecs (VP8/VP9, Opus, Vorbis, WebP)'
         required: false
         default: 'true'
         type: boolean
@@ -192,7 +167,7 @@ jobs:
         make install
         
     - name: Build libvpx
-      if: inputs.enable_libvpx == 'true'
+      if: inputs.enable_additional_codecs == 'true'
       shell: msys2 {0}
       timeout-minutes: 45
       run: |
@@ -204,7 +179,7 @@ jobs:
         make install
         
     - name: Build libaom (AV1)
-      if: inputs.enable_libaom == 'true'
+      if: inputs.enable_av1_codecs == 'true'
       shell: msys2 {0}
       timeout-minutes: 60
       run: |
@@ -217,7 +192,7 @@ jobs:
         make install
         
     - name: Build SVT-AV1
-      if: inputs.enable_libsvtav1 == 'true'
+      if: inputs.enable_av1_codecs == 'true'
       shell: msys2 {0}
       timeout-minutes: 60
       run: |
@@ -230,7 +205,7 @@ jobs:
         make install
         
     - name: Build dav1d
-      if: inputs.enable_libdav1d == 'true'
+      if: inputs.enable_av1_codecs == 'true'
       shell: msys2 {0}
       timeout-minutes: 30
       run: |
@@ -268,7 +243,7 @@ jobs:
         make install
         
     - name: Build Opus
-      if: inputs.enable_libopus == 'true'
+      if: inputs.enable_additional_codecs == 'true'
       shell: msys2 {0}
       timeout-minutes: 20
       run: |
@@ -281,7 +256,7 @@ jobs:
         make install
         
     - name: Build Vorbis
-      if: inputs.enable_libvorbis == 'true'
+      if: inputs.enable_additional_codecs == 'true'
       shell: msys2 {0}
       timeout-minutes: 30
       run: |
@@ -304,7 +279,7 @@ jobs:
         make install
         
     - name: Build WebP
-      if: inputs.enable_libwebp == 'true'
+      if: inputs.enable_additional_codecs == 'true'
       shell: msys2 {0}
       timeout-minutes: 20
       run: |
@@ -376,23 +351,23 @@ jobs:
           CONFIGURE_ARGS="$CONFIGURE_ARGS --enable-libx265"
         fi
         
-        if [ "${{ inputs.enable_libvpx }}" = "true" ]; then
+        if [ "${{ inputs.enable_additional_codecs }}" = "true" ]; then
           CONFIGURE_ARGS="$CONFIGURE_ARGS --enable-libvpx"
         fi
         
-        if [ "${{ inputs.enable_libaom }}" = "true" ]; then
+        if [ "${{ inputs.enable_av1_codecs }}" = "true" ]; then
           CONFIGURE_ARGS="$CONFIGURE_ARGS --enable-libaom"
         fi
         
-        if [ "${{ inputs.enable_libsvtav1 }}" = "true" ]; then
+        if [ "${{ inputs.enable_av1_codecs }}" = "true" ]; then
           CONFIGURE_ARGS="$CONFIGURE_ARGS --enable-libsvtav1"
         fi
         
-        if [ "${{ inputs.enable_libdav1d }}" = "true" ]; then
+        if [ "${{ inputs.enable_av1_codecs }}" = "true" ]; then
           CONFIGURE_ARGS="$CONFIGURE_ARGS --enable-libdav1d"
         fi
         
-        if [ "${{ inputs.enable_libwebp }}" = "true" ]; then
+        if [ "${{ inputs.enable_additional_codecs }}" = "true" ]; then
           CONFIGURE_ARGS="$CONFIGURE_ARGS --enable-libwebp"
         fi
         
@@ -405,11 +380,11 @@ jobs:
           CONFIGURE_ARGS="$CONFIGURE_ARGS --enable-libmp3lame"
         fi
         
-        if [ "${{ inputs.enable_libopus }}" = "true" ]; then
+        if [ "${{ inputs.enable_additional_codecs }}" = "true" ]; then
           CONFIGURE_ARGS="$CONFIGURE_ARGS --enable-libopus"
         fi
         
-        if [ "${{ inputs.enable_libvorbis }}" = "true" ]; then
+        if [ "${{ inputs.enable_additional_codecs }}" = "true" ]; then
           CONFIGURE_ARGS="$CONFIGURE_ARGS --enable-libvorbis"
         fi
         
@@ -507,15 +482,10 @@ jobs:
         - Non-free: ${{ inputs.enable_nonfree }}
         - x264: ${{ inputs.enable_libx264 }}
         - x265: ${{ inputs.enable_libx265 }}
-        - VP8/VP9: ${{ inputs.enable_libvpx }}
-        - AV1 (libaom): ${{ inputs.enable_libaom }}
-        - SVT-AV1: ${{ inputs.enable_libsvtav1 }}
-        - dav1d: ${{ inputs.enable_libdav1d }}
+        - AV1 codecs: ${{ inputs.enable_av1_codecs }} (libaom, SVT-AV1, dav1d)
         - FDK-AAC: ${{ inputs.enable_libfdk_aac }}
         - MP3 LAME: ${{ inputs.enable_libmp3lame }}
-        - Opus: ${{ inputs.enable_libopus }}
-        - Vorbis: ${{ inputs.enable_libvorbis }}
-        - WebP: ${{ inputs.enable_libwebp }}
+        - Additional codecs: ${{ inputs.enable_additional_codecs }} (VP8/VP9, Opus, Vorbis, WebP)
         - CUDA: ${{ inputs.enable_cuda }} (version: ${{ inputs.cuda_version }})
         
         Usage:
@@ -579,15 +549,10 @@ jobs:
         echo "- CUDA: ${{ inputs.enable_cuda }} (v${{ inputs.cuda_version }})"
         echo "- x264: ${{ inputs.enable_libx264 }}"
         echo "- x265: ${{ inputs.enable_libx265 }}"
-        echo "- VP8/VP9: ${{ inputs.enable_libvpx }}"
-        echo "- AV1: ${{ inputs.enable_libaom }}"
-        echo "- SVT-AV1: ${{ inputs.enable_libsvtav1 }}"
-        echo "- dav1d: ${{ inputs.enable_libdav1d }}"
+        echo "- AV1 codecs: ${{ inputs.enable_av1_codecs }}"
         echo "- FDK-AAC: ${{ inputs.enable_libfdk_aac }}"
         echo "- MP3: ${{ inputs.enable_libmp3lame }}"
-        echo "- Opus: ${{ inputs.enable_libopus }}"
-        echo "- Vorbis: ${{ inputs.enable_libvorbis }}"
-        echo "- WebP: ${{ inputs.enable_libwebp }}"
+        echo "- Additional codecs: ${{ inputs.enable_additional_codecs }}"
         echo ""
         echo "Artifact: ffmpeg-windows-x64-cuda.zip"
         echo "Size: $(du -h ffmpeg-windows-x64-cuda.zip | cut -f1)"
