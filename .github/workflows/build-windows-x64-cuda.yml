@@ -1,6 +1,7 @@
 name: Build FFmpeg Windows x64 with CUDA
 
 on:
+  push:
   workflow_dispatch:
     inputs:
       enable_gpl:
