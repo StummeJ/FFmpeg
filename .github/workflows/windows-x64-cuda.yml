@@ -1,513 +1,367 @@
-name: Windows x64 CUDA v13 Build
+name: Windows x64 CUDA v13 Build with Media Autobuild Suite
 
 on:
-  push: 
+  push:
+    branches: [main, master, release/8.0]
   workflow_dispatch:
     inputs:
-      enable_gpl:
-        description: 'Enable GPL components'
+      build_type:
+        description: 'FFmpeg build type'
+        type: choice
+        options:
+          - 'light'
+          - 'zeranoe'
+          - 'full'
+        default: 'full'
+      enable_cuda_features:
+        description: 'Enable CUDA hardware acceleration (nvenc, nvdec, libnpp)'
         type: boolean
         default: true
-      enable_nonfree:
-        description: 'Enable non-free components'
+      enable_non_free:
+        description: 'Enable non-free components (required for CUDA)'
         type: boolean
         default: true
-      enable_cuda_nvcc:
-        description: 'Enable CUDA compiler support'
-        type: boolean
-        default: true
-      enable_nvenc:
-        description: 'Enable NVIDIA hardware encoding'
-        type: boolean
-        default: true
-      enable_nvdec:
-        description: 'Enable NVIDIA hardware decoding'
-        type: boolean
-        default: true
-      enable_libx264:
-        description: 'Enable x264 encoder'
-        type: boolean
-        default: true
-      enable_libx265:
-        description: 'Enable x265 encoder'
-        type: boolean
-        default: true
-      enable_libopus:
-        description: 'Enable Opus codec'
-        type: boolean
-        default: true
-      enable_libvpx:
-        description: 'Enable VP8/VP9 codecs'
-        type: boolean
-        default: true
-      enable_libaom:
-        description: 'Enable AV1 codec'
+      architecture:
+        description: 'Target architecture'
+        type: choice
+        options:
+          - '64bit'
+          - '32bit'
+          - 'both'
+        default: '64bit'
+      delete_build_after:
+        description: 'Delete build folder after compilation to save space'
         type: boolean
         default: true
 
 env:
-  CUDA_VERSION: "13.0"
-  NASM_VERSION: "2.16.01"
-  YASM_VERSION: "1.3.0"
-  VCPKG_ROOT: "C:\\vcpkg"
+  CUDA_SDK_VERSION: "13.0"
+  BUILD_DIR: "C:\\mabs"
 
 jobs:
   build:
-    name: Build FFmpeg with CUDA v13
+    name: Build FFmpeg with Media Autobuild Suite
     runs-on: windows-2022
-    timeout-minutes: 90
+    timeout-minutes: 180
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup MSVC
-        uses: microsoft/setup-msbuild@v1.3
+      - name: Setup build environment
+        shell: powershell
+        run: |
+          # Set short path to avoid issues with long paths and spaces
+          $env:BUILD_DIR = "${{ env.BUILD_DIR }}"
+          Write-Host "Using build directory: $env:BUILD_DIR"
+          
+          # Create build directory
+          if (!(Test-Path $env:BUILD_DIR)) {
+            New-Item -ItemType Directory -Force -Path $env:BUILD_DIR
+          }
+
+      - name: Cache Media Autobuild Suite
+        id: cache-mabs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.BUILD_DIR }}
+            !${{ env.BUILD_DIR }}/build
+            !${{ env.BUILD_DIR }}/local32
+            !${{ env.BUILD_DIR }}/local64
+          key: mabs-${{ runner.os }}-${{ hashFiles('.github/workflows/windows-x64-cuda.yml') }}
+
+      - name: Download Media Autobuild Suite
+        if: steps.cache-mabs.outputs.cache-hit != 'true'
+        shell: powershell
+        run: |
+          $env:BUILD_DIR = "${{ env.BUILD_DIR }}"
+          Write-Host "Downloading Media Autobuild Suite..."
+          
+          $zipUrl = "https://github.com/m-ab-s/media-autobuild_suite/archive/master.zip"
+          $zipPath = "$env:BUILD_DIR\mabs.zip"
+          
+          Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $env:BUILD_DIR -Force
+          
+          # Move files from subdirectory to root
+          Move-Item "$env:BUILD_DIR\media-autobuild_suite-master\*" $env:BUILD_DIR -Force
+          Remove-Item "$env:BUILD_DIR\media-autobuild_suite-master" -Force
+          Remove-Item $zipPath -Force
+          
+          Write-Host "Media Autobuild Suite downloaded successfully"
 
       - name: Cache CUDA SDK
         id: cache-cuda
         uses: actions/cache@v4
         with:
           path: |
-            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0
+            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v${{ env.CUDA_SDK_VERSION }}
             C:\Program Files\NVIDIA Corporation\Nsight*
-          key: cuda-v13.0-${{ runner.os }}
+          key: cuda-v${{ env.CUDA_SDK_VERSION }}-${{ runner.os }}
 
-      - name: Download and Install CUDA SDK v13.0
-        if: steps.cache-cuda.outputs.cache-hit != 'true'
+      - name: Download and Install CUDA SDK
+        if: steps.cache-cuda.outputs.cache-hit != 'true' && inputs.enable_cuda_features == true
+        shell: powershell
         run: |
-          Write-Host "Downloading CUDA SDK v13.0..."
-          $cudaUrl = "https://developer.download.nvidia.com/compute/cuda/13.0.0/network_installers/cuda_13.0.0_windows_network.exe"
-          Invoke-WebRequest -Uri $cudaUrl -OutFile "cuda_installer.exe"
+          Write-Host "Downloading CUDA SDK v${{ env.CUDA_SDK_VERSION }}..."
+          $cudaUrl = "https://developer.download.nvidia.com/compute/cuda/${{ env.CUDA_SDK_VERSION }}.0/network_installers/cuda_${{ env.CUDA_SDK_VERSION }}.0_windows_network.exe"
+          $cudaInstaller = "cuda_installer.exe"
           
-          Write-Host "Installing CUDA SDK..."
-          Start-Process -Wait -FilePath "cuda_installer.exe" -ArgumentList "-s"
+          Invoke-WebRequest -Uri $cudaUrl -OutFile $cudaInstaller
+          
+          Write-Host "Installing CUDA SDK silently..."
+          Start-Process -Wait -FilePath $cudaInstaller -ArgumentList "-s"
           
           # Verify installation
-          if (Test-Path "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin\nvcc.exe") {
-            Write-Host "CUDA SDK v13.0 installed successfully"
+          $cudaPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v${{ env.CUDA_SDK_VERSION }}\bin\nvcc.exe"
+          if (Test-Path $cudaPath) {
+            Write-Host "CUDA SDK v${{ env.CUDA_SDK_VERSION }} installed successfully"
+            # Set environment variables for the session
+            $env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v${{ env.CUDA_SDK_VERSION }}"
+            echo "CUDA_PATH=$env:CUDA_PATH" >> $env:GITHUB_ENV
+            echo "CUDA_PATH_V${{ env.CUDA_SDK_VERSION | Replace '.', '_' }}=$env:CUDA_PATH" >> $env:GITHUB_ENV
           } else {
             throw "CUDA SDK installation failed"
           }
 
-      - name: Save CUDA Cache
-        if: steps.cache-cuda.outputs.cache-hit != 'true' && (success() || failure())
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0
-            C:\Program Files\NVIDIA Corporation\Nsight*
-          key: cuda-v13.0-${{ runner.os }}
-
-      - name: Setup CUDA Environment
+      - name: Configure Media Autobuild Suite
+        shell: powershell
         run: |
-          $env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0"
-          $env:CUDA_PATH_V13_0 = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0"
-          $env:PATH = "$env:CUDA_PATH\bin;$env:PATH"
-          echo "CUDA_PATH=$env:CUDA_PATH" >> $env:GITHUB_ENV
-          echo "CUDA_PATH_V13_0=$env:CUDA_PATH_V13_0" >> $env:GITHUB_ENV
-          echo "$env:CUDA_PATH\bin" >> $env:GITHUB_PATH
-
-      - name: Cache Build Tools
-        id: cache-tools
-        uses: actions/cache@v4
-        with:
-          path: |
-            C:\tools\nasm
-            C:\tools\yasm
-          key: build-tools-nasm-${{ env.NASM_VERSION }}-yasm-${{ env.YASM_VERSION }}
-
-      - name: Install NASM and YASM
-        if: steps.cache-tools.outputs.cache-hit != 'true'
-        run: |
-          # Install NASM
-          Write-Host "Installing NASM ${{ env.NASM_VERSION }}..."
-          New-Item -Path "C:\tools\nasm" -ItemType Directory -Force
-          Invoke-WebRequest -Uri "https://www.nasm.us/pub/nasm/releasebuilds/${{ env.NASM_VERSION }}/win64/nasm-${{ env.NASM_VERSION }}-win64.zip" -OutFile "nasm.zip"
-          Expand-Archive -Path "nasm.zip" -DestinationPath "C:\tools\nasm" -Force
+          $env:BUILD_DIR = "${{ env.BUILD_DIR }}"
           
-          # Install YASM
-          Write-Host "Installing YASM ${{ env.YASM_VERSION }}..."
-          New-Item -Path "C:\tools\yasm" -ItemType Directory -Force
-          Invoke-WebRequest -Uri "http://www.tortall.net/projects/yasm/releases/yasm-${{ env.YASM_VERSION }}-win64.exe" -OutFile "C:\tools\yasm\yasm.exe"
-
-      - name: Save Build Tools Cache
-        if: steps.cache-tools.outputs.cache-hit != 'true' && (success() || failure())
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            C:\tools\nasm
-            C:\tools\yasm
-          key: build-tools-nasm-${{ env.NASM_VERSION }}-yasm-${{ env.YASM_VERSION }}
-
-      - name: Setup Build Tools Path
-        run: |
-          echo "C:\tools\nasm\nasm-${{ env.NASM_VERSION }}" >> $env:GITHUB_PATH
-          echo "C:\tools\yasm" >> $env:GITHUB_PATH
-          
-          # Setup pkg-config for dependency detection
-          if (Test-Path "${{ env.VCPKG_ROOT }}\installed\x64-windows\tools\pkgconf") {
-            echo "${{ env.VCPKG_ROOT }}\installed\x64-windows\tools\pkgconf" >> $env:GITHUB_PATH
+          # Create configuration file
+          $configFile = "$env:BUILD_DIR\build\media-autobuild_suite.ini"
+          $configDir = Split-Path $configFile -Parent
+          if (!(Test-Path $configDir)) {
+            New-Item -ItemType Directory -Force -Path $configDir
           }
           
-          # Set PKG_CONFIG_PATH for ffnvcodec and other dependencies
-          $env:PKG_CONFIG_PATH = "${{ env.VCPKG_ROOT }}\installed\x64-windows\lib\pkgconfig"
-          echo "PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH" >> $env:GITHUB_ENV
+          Write-Host "Creating configuration file..."
+          
+          $arch = "${{ inputs.architecture || '64bit' }}"
+          $license = if ("${{ inputs.enable_non_free }}" -eq "true") { "2" } else { "1" }
+          $buildType = switch ("${{ inputs.build_type || 'full' }}") {
+            "light" { "1" }
+            "zeranoe" { "2" }
+            "full" { "4" }
+            default { "4" }
+          }
+          
+          $config = @"
+[compiler list]
+arch=$arch
+license=$license
+standalone=y
+bmx=n
+bmx_config=n
+cyanrip=n
+jq=n
+jo=n
+ripgrep=n
+curl=n
+rtmpdump=n
+wget=n
+aria2=n
+m-ab-s WinSSL=n
+ffmpeg=y
+ffmpegUpdate=y
+ffmpegChoice=$buildType
+mediainfo=n
+sox=n
+flac=n
+fdkaac=n
+mp4box=n
+mp3lame=n
+speex=n
+vorbis=n
+opus=n
+vpx=n
+aom=n
+rav1e=n
+svtav1=n
+dav1d=n
+vvenc=n
+vvdec=n
+uvg266=n
+x264=n
+x265=n
+kvazaar=n
+other265=n
+flv=n
+deleteSource=y
+strip=y
+pack=y
+logging=y
+bmx2=n
+vlc=n
+numCores=0
+deleteSource=${{ inputs.delete_build_after == true && 'y' || 'n' }}
+ccache=n
+"@
+          
+          $config | Out-File -FilePath $configFile -Encoding ascii
+          
+          Write-Host "Configuration file created at: $configFile"
 
-      - name: Cache vcpkg
-        id: cache-vcpkg
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.VCPKG_ROOT }}
-            ${{ env.VCPKG_ROOT }}/installed
-            ${{ env.VCPKG_ROOT }}/buildtrees
-            ${{ env.VCPKG_ROOT }}/packages
-          key: vcpkg-dynamic-${{ runner.os }}-${{ hashFiles('vcpkg.json', '**/vcpkg.json') }}
-
-      - name: Setup vcpkg
-        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
+      - name: Prepare custom FFmpeg options
+        if: inputs.enable_cuda_features == true
+        shell: powershell
         run: |
-          git clone https://github.com/Microsoft/vcpkg.git ${{ env.VCPKG_ROOT }}
-          cd ${{ env.VCPKG_ROOT }}
-          .\bootstrap-vcpkg.bat
-          .\vcpkg.exe integrate install
+          $env:BUILD_DIR = "${{ env.BUILD_DIR }}"
+          
+          # Create custom FFmpeg options for CUDA support
+          $ffmpegOptionsFile = "$env:BUILD_DIR\build\ffmpeg_options.txt"
+          
+          $cudaOptions = @"
+# CUDA Hardware Acceleration Options
+--enable-nonfree
+--enable-cuda-nvcc
+--enable-cuda-llvm
+--enable-cuvid
+--enable-nvenc
+--enable-nvdec
+--enable-libnpp
+--enable-ffnvcodec
+# CUDA filters require non-free license
+--enable-cuda-filters
+"@
+          
+          $cudaOptions | Out-File -FilePath $ffmpegOptionsFile -Encoding ascii
+          
+          Write-Host "Custom FFmpeg options created for CUDA support"
+          Write-Host "Options file content:"
+          Get-Content $ffmpegOptionsFile
 
-      - name: Install Dependencies via vcpkg
-        if: steps.cache-vcpkg.outputs.cache-hit != 'true'
+      - name: Run Media Autobuild Suite
+        shell: cmd
+        working-directory: ${{ env.BUILD_DIR }}
         run: |
-          cd ${{ env.VCPKG_ROOT }}
+          echo Starting Media Autobuild Suite build...
+          echo Working directory: %CD%
           
-          # Base dependencies - using dynamic libraries for better MSVC compatibility
-          Write-Host "Installing base dependencies..."
-          .\vcpkg.exe install zlib:x64-windows
-          .\vcpkg.exe install openssl:x64-windows
-          .\vcpkg.exe install pkgconf:x64-windows
-          
-          # CUDA/NVENC dependencies - essential for CUDA functionality
-          Write-Host "Installing CUDA dependencies..."
-          .\vcpkg.exe install ffnvcodec:x64-windows
-          
-          # Conditional dependencies based on inputs
-          Write-Host "Installing conditional dependencies..."
-          if ("${{ github.event.inputs.enable_libopus || 'true' }}" -eq "true") {
-            Write-Host "Installing Opus..."
-            .\vcpkg.exe install opus:x64-windows
-          }
-          if ("${{ github.event.inputs.enable_libx264 || 'true' }}" -eq "true") {
-            Write-Host "Installing x264..."
-            .\vcpkg.exe install x264:x64-windows
-          }
-          if ("${{ github.event.inputs.enable_libx265 || 'true' }}" -eq "true") {
-            Write-Host "Installing x265..."
-            .\vcpkg.exe install x265:x64-windows
-          }
-          if ("${{ github.event.inputs.enable_libvpx || 'true' }}" -eq "true") {
-            Write-Host "Installing libvpx..."
-            .\vcpkg.exe install libvpx:x64-windows
-          }
-          if ("${{ github.event.inputs.enable_libaom || 'true' }}" -eq "true") {
-            Write-Host "Installing AOM..."
-            .\vcpkg.exe install aom:x64-windows
-          }
-
-      - name: Save vcpkg Cache
-        if: steps.cache-vcpkg.outputs.cache-hit != 'true' && (success() || failure())
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ${{ env.VCPKG_ROOT }}
-            ${{ env.VCPKG_ROOT }}/installed
-            ${{ env.VCPKG_ROOT }}/buildtrees
-            ${{ env.VCPKG_ROOT }}/packages
-          key: vcpkg-dynamic-${{ runner.os }}-${{ hashFiles('vcpkg.json', '**/vcpkg.json') }}
-
-      - name: Configure FFmpeg Build
-        run: |
-          # Use forward slashes for Unix-style paths in configure script
-          $CUDA_INCLUDE = $env:CUDA_PATH -replace '\\', '/'
-          $CUDA_LIB = $env:CUDA_PATH -replace '\\', '/'
-          $VCPKG_INCLUDE = "${{ env.VCPKG_ROOT }}\installed\x64-windows\include" -replace '\\', '/'
-          $VCPKG_LIB = "${{ env.VCPKG_ROOT }}\installed\x64-windows\lib" -replace '\\', '/'
-          
-          $CONFIGURE_OPTS = @(
-            "--toolchain=msvc",
-            "--arch=x86_64", 
-            "--prefix=./build/x64",
-            "--extra-cflags=-I`"$CUDA_INCLUDE/include`"",
-            "--extra-ldflags=-L`"$CUDA_LIB/lib/x64`"",
-            "--extra-libs=cuda.lib",
-            "--extra-libs=cudart.lib", 
-            "--extra-libs=cufft.lib",
-            "--extra-libs=curand.lib",
-            "--extra-libs=cublas.lib",
-            "--extra-libs=nppig.lib",
-            "--extra-libs=nppicc.lib",
-            "--extra-libs=nppidei.lib",
-            "--extra-libs=nppif.lib",
-            "--extra-libs=nppist.lib",
-            "--extra-libs=nppisu.lib",
-            "--extra-libs=nppitc.lib",
-            "--extra-libs=nppc.lib",
-            "--extra-cflags=-I`"$VCPKG_INCLUDE`"",
-            "--extra-ldflags=-L`"$VCPKG_LIB`"",
-            "--disable-w32threads",
-            "--enable-shared",
-            "--disable-static"
+          REM Set CUDA environment if enabled
+          if "${{ inputs.enable_cuda_features }}" == "true" (
+            set CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v${{ env.CUDA_SDK_VERSION }}
+            set CUDA_PATH_V13_0=%CUDA_PATH%
+            echo CUDA enabled at: %CUDA_PATH%
           )
           
-          if ("${{ github.event.inputs.enable_gpl || 'true' }}" -eq "true") {
-            $CONFIGURE_OPTS += "--enable-gpl"
-          }
+          REM Run the media autobuild suite
+          call media-autobuild_suite.bat
           
-          # Auto-enable nonfree when CUDA features are enabled
-          $enable_cuda_features = @(
-            "${{ github.event.inputs.enable_cuda_nvcc || 'true' }}",
-            "${{ github.event.inputs.enable_nvenc || 'true' }}",
-            "${{ github.event.inputs.enable_nvdec || 'true' }}"
-          )
-          $cuda_enabled = $enable_cuda_features -contains "true"
-          
-          if ("${{ github.event.inputs.enable_nonfree || 'true' }}" -eq "true" -or $cuda_enabled) {
-            $CONFIGURE_OPTS += "--enable-nonfree"
-          }
-          
-          # Enable core CUDA functionality - ffnvcodec is essential for all CUDA features
-          $CONFIGURE_OPTS += "--enable-ffnvcodec"
-          
-          # Enable NPP (NVIDIA Performance Primitives) for advanced CUDA video processing
-          $CONFIGURE_OPTS += "--enable-libnpp"
-          
-          if ("${{ github.event.inputs.enable_cuda_nvcc || 'true' }}" -eq "true") {
-            $CONFIGURE_OPTS += "--enable-cuda-nvcc", "--enable-cuda-llvm"
-          }
-          if ("${{ github.event.inputs.enable_nvenc || 'true' }}" -eq "true") {
-            $CONFIGURE_OPTS += "--enable-nvenc", "--enable-cuvid"
-          }
-          if ("${{ github.event.inputs.enable_nvdec || 'true' }}" -eq "true") {
-            $CONFIGURE_OPTS += "--enable-nvdec"
-          }
-          if ("${{ github.event.inputs.enable_libx264 || 'true' }}" -eq "true") {
-            $CONFIGURE_OPTS += "--enable-libx264"
-          }
-          if ("${{ github.event.inputs.enable_libx265 || 'true' }}" -eq "true") {
-            $CONFIGURE_OPTS += "--enable-libx265"
-          }
-          if ("${{ github.event.inputs.enable_libopus || 'true' }}" -eq "true") {
-            $CONFIGURE_OPTS += "--enable-libopus"
-          }
-          if ("${{ github.event.inputs.enable_libvpx || 'true' }}" -eq "true") {
-            $CONFIGURE_OPTS += "--enable-libvpx"
-          }
-          if ("${{ github.event.inputs.enable_libaom || 'true' }}" -eq "true") {
-            $CONFIGURE_OPTS += "--enable-libaom"
-          }
-          
-          Write-Host "Configuring with options: $($CONFIGURE_OPTS -join ' ')"
-          
-          # Create a batch file that sets up MSVC environment and runs configure
-          $configureArgs = $CONFIGURE_OPTS -join ' '
-          $batchContent = @(
-            "@echo off",
-            "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`"",
-            "bash -c `"./configure $configureArgs`""
-          ) -join "`r`n"
-          $batchContent | Out-File -FilePath "configure_with_msvc.bat" -Encoding ascii
-          
-          # Run the batch file
-          cmd.exe /c configure_with_msvc.bat
-          
-          # Display configuration summary
-          Write-Host ""
-          Write-Host "=============================================="
-          Write-Host "Configuration completed. Summary:"
-          Write-Host "=============================================="
-          if (Test-Path "ffbuild/config.h") {
-            Write-Host "Checking enabled features:"
-            bash -c "grep -E 'HAVE_(CUDA|NVENC|NVDEC|CUVID)' ffbuild/config.h | head -10" 2>$null
-            bash -c "grep -E 'CONFIG_(FFNVCODEC|LIBNPP|LIBX264|LIBX265|LIBOPUS|LIBVPX|LIBAOM)' ffbuild/config.h | head -15" 2>$null
-          }
-          Write-Host "=============================================="
+          echo Build completed successfully!
 
-      - name: Build FFmpeg
+      - name: Validate build output
+        shell: powershell
         run: |
-          # Create a batch file that sets up MSVC environment and runs make
-          $batchContent = @(
-            "@echo off",
-            "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`"",
-            "echo Building FFmpeg with parallel compilation...",
-            "make `"-j%NUMBER_OF_PROCESSORS%`"",
-            "echo.",
-            "echo Build completed, checking for main executables...",
-            "if not exist ffmpeg.exe echo WARNING: ffmpeg.exe not found!",
-            "if not exist ffprobe.exe echo WARNING: ffprobe.exe not found!",
-            "if exist ffmpeg.exe echo ffmpeg.exe: OK",
-            "if exist ffprobe.exe echo ffprobe.exe: OK"
-          ) -join "`r`n"
-          $batchContent | Out-File -FilePath "build_with_msvc.bat" -Encoding ascii
+          $env:BUILD_DIR = "${{ env.BUILD_DIR }}"
+          $arch = "${{ inputs.architecture || '64bit' }}"
           
-          # Run the batch file
-          cmd.exe /c build_with_msvc.bat
+          if ($arch -eq "64bit" -or $arch -eq "both") {
+            $ffmpegPath = "$env:BUILD_DIR\local64\bin-video\ffmpeg.exe"
+            $ffprobePath = "$env:BUILD_DIR\local64\bin-video\ffprobe.exe"
+            
+            if (Test-Path $ffmpegPath) {
+              Write-Host "✅ 64-bit FFmpeg build successful!"
+              
+              # Test basic functionality
+              & $ffmpegPath -version
+              
+              # Test CUDA features if enabled
+              if ("${{ inputs.enable_cuda_features }}" -eq "true") {
+                Write-Host "Testing CUDA features..."
+                & $ffmpegPath -hide_banner -encoders | Select-String "nvenc"
+                & $ffmpegPath -hide_banner -decoders | Select-String "cuvid"
+                & $ffmpegPath -hide_banner -hwaccels | Select-String "cuda"
+                & $ffmpegPath -hide_banner -filters | Select-String "npp"
+              }
+            } else {
+              throw "64-bit FFmpeg build failed - executable not found"
+            }
+          }
 
-      - name: Build Examples and Tools
+      - name: Package build artifacts
+        shell: powershell
         run: |
-          # Create a batch file that sets up MSVC environment and runs make
-          $batchContent = @(
-            "@echo off",
-            "call `"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat`"",
-            "make examples",
-            "make alltools"
-          ) -join "`r`n"
-          $batchContent | Out-File -FilePath "build_examples_with_msvc.bat" -Encoding ascii
+          $env:BUILD_DIR = "${{ env.BUILD_DIR }}"
+          $arch = "${{ inputs.architecture || '64bit' }}"
+          $buildType = "${{ inputs.build_type || 'full' }}"
+          $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
           
-          # Run the batch file
-          cmd.exe /c build_examples_with_msvc.bat
-
-      - name: Validate CUDA Functionality
-        run: |
-          Write-Host "Testing basic functionality..."
-          .\ffmpeg.exe -version
-          .\ffprobe.exe -version
+          Write-Host "Creating build artifacts..."
           
-          Write-Host "Testing built-in filters..."
-          .\ffmpeg.exe -f lavfi -i testsrc=duration=1:size=320x240:rate=1 -f null -
-          
-          Write-Host "Testing CUDA encoders availability..."
-          .\ffmpeg.exe -hide_banner -encoders | Select-String nvenc
-          
-          Write-Host "Testing CUDA decoders availability..."
-          .\ffmpeg.exe -hide_banner -decoders | Select-String cuvid
-          
-          Write-Host "Testing FFnvcodec support..."
-          .\ffmpeg.exe -hide_banner -hwaccels | Select-String cuda
-          
-          Write-Host "Testing NPP (NVIDIA Performance Primitives) filters..."
-          .\ffmpeg.exe -hide_banner -filters | Select-String npp
-          
-          Write-Host "Testing basic encoding with testsrc..."
-          .\ffmpeg.exe -f lavfi -i testsrc=duration=5:size=640x480:rate=30 -c:v mpeg4 -f null -
-
-      - name: Prepare Build Artifacts
-        run: |
-          # Create distribution directory
-          New-Item -Path "ffmpeg-windows-x64-cuda13" -ItemType Directory -Force
-          
-          # Copy main executables
-          Copy-Item "ffmpeg.exe" "ffmpeg-windows-x64-cuda13/"
-          Copy-Item "ffprobe.exe" "ffmpeg-windows-x64-cuda13/"
-          if (Test-Path "ffplay.exe") {
-            Copy-Item "ffplay.exe" "ffmpeg-windows-x64-cuda13/"
+          # Create artifacts directory
+          $artifactsDir = "$env:BUILD_DIR\artifacts"
+          if (!(Test-Path $artifactsDir)) {
+            New-Item -ItemType Directory -Force -Path $artifactsDir
           }
           
-          # Copy CUDA runtime DLLs
-          $cudaBinPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.0\bin"
-          if (Test-Path $cudaBinPath) {
-            Copy-Item "$cudaBinPath\cudart64_*.dll" "ffmpeg-windows-x64-cuda13/" -ErrorAction SilentlyContinue
-            Copy-Item "$cudaBinPath\cufft64_*.dll" "ffmpeg-windows-x64-cuda13/" -ErrorAction SilentlyContinue
-            Copy-Item "$cudaBinPath\curand64_*.dll" "ffmpeg-windows-x64-cuda13/" -ErrorAction SilentlyContinue
-            Copy-Item "$cudaBinPath\cublas64_*.dll" "ffmpeg-windows-x64-cuda13/" -ErrorAction SilentlyContinue
-          }
-          
-          # Copy examples
-          New-Item -Path "ffmpeg-windows-x64-cuda13\examples" -ItemType Directory -Force
-          Get-ChildItem -Path "doc\examples\*.exe" | Copy-Item -Destination "ffmpeg-windows-x64-cuda13\examples\"
-          
-          # Copy tools
-          New-Item -Path "ffmpeg-windows-x64-cuda13\tools" -ItemType Directory -Force
-          Get-ChildItem -Path "tools\*.exe" | Copy-Item -Destination "ffmpeg-windows-x64-cuda13\tools\" -ErrorAction SilentlyContinue
-          
-          # Create build info
-          $buildDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC"
-          $buildInfo = "FFmpeg Windows x64 CUDA v13 Build Information`r`n"
-          $buildInfo += "=============================================`r`n`r`n"
-          $buildInfo += "Build Date: $buildDate`r`n"
-          $buildInfo += "Git Commit: ${{ github.sha }}`r`n"
-          $buildInfo += "Runner OS: ${{ runner.os }}`r`n`r`n"
-          $buildInfo += "Configuration Options:`r`n"
-          $buildInfo += "- GPL Components: ${{ github.event.inputs.enable_gpl || 'true' }}`r`n"
-          $buildInfo += "- Non-free Components: ${{ github.event.inputs.enable_nonfree || 'true' }}`r`n"
-          $buildInfo += "- CUDA Compiler: ${{ github.event.inputs.enable_cuda_nvcc || 'true' }}`r`n"
-          $buildInfo += "- NVENC Hardware Encoding: ${{ github.event.inputs.enable_nvenc || 'true' }}`r`n"
-          $buildInfo += "- NVDEC Hardware Decoding: ${{ github.event.inputs.enable_nvdec || 'true' }}`r`n"
-          $buildInfo += "- x264 Encoder: ${{ github.event.inputs.enable_libx264 || 'true' }}`r`n"
-          $buildInfo += "- x265 Encoder: ${{ github.event.inputs.enable_libx265 || 'true' }}`r`n"
-          $buildInfo += "- Opus Codec: ${{ github.event.inputs.enable_libopus || 'true' }}`r`n"
-          $buildInfo += "- VP8/VP9 Codecs: ${{ github.event.inputs.enable_libvpx || 'true' }}`r`n"
-          $buildInfo += "- AV1 Codec: ${{ github.event.inputs.enable_libaom || 'true' }}`r`n`r`n"
-          $buildInfo += "Hardware Support:`r`n"
-          $buildInfo += "- NVIDIA CUDA SDK v13.0`r`n"
-          $buildInfo += "- Optimized for RTX 3090, 4090, 5090 GPUs`r`n"
-          $buildInfo += "- Compute Capability 8.6+`r`n`r`n"
-          $buildInfo += "Usage:`r`n"
-          $buildInfo += "1. Extract all files to a directory`r`n"
-          $buildInfo += "2. Ensure NVIDIA GPU drivers are installed (v520.61.05 or later)`r`n"
-          $buildInfo += "3. Run ffmpeg.exe directly - no additional installation required`r`n`r`n"
-          $buildInfo += "Examples:`r`n"
-          $buildInfo += "- Hardware-accelerated encoding: ffmpeg.exe -f lavfi -i testsrc -c:v h264_nvenc output.mp4`r`n"
-          $buildInfo += "- Hardware-accelerated decoding: ffmpeg.exe -hwaccel cuda -i input.mp4 -c:v h264_nvenc output.mp4`r`n"
-          $buildInfo += "- List CUDA devices: ffmpeg.exe -f lavfi -i nullsrc -c:v h264_nvenc -gpu list -f null -`r`n"
-          $buildInfo | Out-File -FilePath "ffmpeg-windows-x64-cuda13\BUILD_INFO.txt" -Encoding utf8
-          
-          # Create README
-          $readmeContent = "# FFmpeg Windows x64 CUDA v13 Build`r`n`r`n"
-          $readmeContent += "This is a self-contained FFmpeg build with NVIDIA CUDA v13 hardware acceleration support.`r`n`r`n"
-          $readmeContent += "## Requirements`r`n"
-          $readmeContent += "- Windows 10/11 x64`r`n"
-          $readmeContent += "- NVIDIA GPU with Compute Capability 8.6+ (RTX 3090, 4090, 5090)`r`n"
-          $readmeContent += "- NVIDIA GPU drivers v520.61.05 or later`r`n`r`n"
-          $readmeContent += "## Quick Start`r`n"
-          $readmeContent += "1. Extract all files to a directory`r`n"
-          $readmeContent += "2. Open Command Prompt or PowerShell in that directory`r`n"
-          $readmeContent += "3. Run: ``ffmpeg.exe -version`` to verify installation`r`n`r`n"
-          $readmeContent += "## Hardware Acceleration`r`n"
-          $readmeContent += "This build includes NVENC (encoding) and NVDEC (decoding) support for:`r`n"
-          $readmeContent += "- H.264/AVC`r`n"
-          $readmeContent += "- H.265/HEVC`r`n"
-          $readmeContent += "- AV1 (encoding on supported GPUs)`r`n`r`n"
-          $readmeContent += "Use ``-c:v h264_nvenc`` for H.264 hardware encoding`r`n"
-          $readmeContent += "Use ``-hwaccel cuda`` for hardware-accelerated decoding`r`n`r`n"
-          $readmeContent += "## Support`r`n"
-          $readmeContent += "For FFmpeg documentation: https://ffmpeg.org/documentation.html`r`n"
-          $readmeContent += "For NVIDIA hardware acceleration: https://developer.nvidia.com/ffmpeg`r`n"
-          $readmeContent | Out-File -FilePath "ffmpeg-windows-x64-cuda13\README.md" -Encoding utf8
+          # Package 64-bit binaries if built
+          if ($arch -eq "64bit" -or $arch -eq "both") {
+            $binDir = "$env:BUILD_DIR\local64\bin-video"
+            if (Test-Path $binDir) {
+              $zipName = "ffmpeg-$buildType-win64-cuda-$timestamp.zip"
+              $zipPath = "$artifactsDir\$zipName"
+              
+              # Add build info
+              $buildInfo = @"
+FFmpeg Windows x64 CUDA Build
+=============================
+Build Type: $buildType
+Architecture: x64 (64-bit)
+CUDA Support: ${{ inputs.enable_cuda_features }}
+Build Date: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
+Workflow: ${{ github.workflow }}
+Commit: ${{ github.sha }}
 
-      - name: Upload Build Artifacts
+Features:
+- NVIDIA Hardware Encoding (NVENC)
+- NVIDIA Hardware Decoding (NVDEC) 
+- CUDA Video Filters
+- NPP Hardware Acceleration
+- Hardware-accelerated scaling and filtering
+
+Usage Examples:
+# Hardware-accelerated transcoding
+ffmpeg -hwaccel cuda -hwaccel_output_format cuda -i input.mp4 -c:v h264_nvenc -preset fast -b:v 5M output.mp4
+
+# NPP scaling filter  
+ffmpeg -hwaccel cuda -hwaccel_output_format cuda -i input.mp4 -vf scale_npp=1920:1080 -c:v h264_nvenc output.mp4
+
+# Multiple output with hardware acceleration
+ffmpeg -hwaccel cuda -hwaccel_output_format cuda -i input.mp4 -vf scale_npp=1920:1080 -c:v h264_nvenc -b:v 8M output_1080p.mp4 -vf scale_npp=1280:720 -c:v h264_nvenc -b:v 5M output_720p.mp4
+"@
+              
+              $buildInfo | Out-File "$binDir\BUILD_INFO.txt" -Encoding utf8
+              
+              Compress-Archive -Path "$binDir\*" -DestinationPath $zipPath -CompressionLevel Optimal
+              Write-Host "✅ Created: $zipName"
+            }
+          }
+
+      - name: Upload build artifacts  
         uses: actions/upload-artifact@v4
         with:
-          name: ffmpeg-windows-x64-cuda13-${{ github.run_number }}
-          path: ffmpeg-windows-x64-cuda13/
+          name: ffmpeg-cuda-build-${{ github.run_number }}
+          path: ${{ env.BUILD_DIR }}\artifacts\*.zip
           retention-days: 30
+          if-no-files-found: error
 
-      - name: Create Release Archive
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/release/'))
+      - name: Cleanup temporary files
+        if: always()
+        shell: powershell
         run: |
-          Compress-Archive -Path "ffmpeg-windows-x64-cuda13\*" -DestinationPath "ffmpeg-windows-x64-cuda13-v${{ github.run_number }}.zip"
-
-      - name: Upload Release Archive
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/release/'))
-        uses: actions/upload-artifact@v4
-        with:
-          name: ffmpeg-windows-x64-cuda13-release-v${{ github.run_number }}
-          path: ffmpeg-windows-x64-cuda13-v${{ github.run_number }}.zip
-          retention-days: 90
-
-      - name: Build Summary
-        run: |
-          Write-Host "=============================================="
-          Write-Host "FFmpeg Windows x64 CUDA v13 Build Complete"
-          Write-Host "=============================================="
-          Write-Host ""
-          Write-Host "Build Configuration:"
-          Write-Host "- GPL Components: ${{ github.event.inputs.enable_gpl || 'true' }}"
-          Write-Host "- CUDA Compiler: ${{ github.event.inputs.enable_cuda_nvcc || 'true' }}"
-          Write-Host "- NVENC Encoding: ${{ github.event.inputs.enable_nvenc || 'true' }}"
-          Write-Host "- NVDEC Decoding: ${{ github.event.inputs.enable_nvdec || 'true' }}"
-          Write-Host ""
-          Write-Host "Artifacts:"
-          Write-Host "- Main build: ffmpeg-windows-x64-cuda13-${{ github.run_number }}"
-          if ("${{ github.event_name }}" -eq "push") {
-            Write-Host "- Release archive: ffmpeg-windows-x64-cuda13-release-v${{ github.run_number }}"
+          $env:BUILD_DIR = "${{ env.BUILD_DIR }}"
+          
+          # Clean up build directory if requested
+          if ("${{ inputs.delete_build_after }}" -eq "true") {
+            Write-Host "Cleaning up build directory..."
+            $buildFolder = "$env:BUILD_DIR\build"
+            if (Test-Path $buildFolder) {
+              Remove-Item $buildFolder -Recurse -Force -ErrorAction SilentlyContinue
+              Write-Host "Build folder cleaned up"
+            }
           }
-          Write-Host ""
-          Write-Host "The build includes CUDA runtime DLLs and is ready for deployment"
-          Write-Host "on systems with compatible NVIDIA GPUs and drivers."
+          
+          Write-Host "Cleanup completed"
