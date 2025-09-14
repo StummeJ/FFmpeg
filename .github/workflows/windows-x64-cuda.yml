@@ -154,7 +154,7 @@ jobs:
             ${{ env.VCPKG_ROOT }}/installed
             ${{ env.VCPKG_ROOT }}/buildtrees
             ${{ env.VCPKG_ROOT }}/packages
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', '**/vcpkg.json') }}
+          key: vcpkg-shared-${{ runner.os }}-${{ hashFiles('vcpkg.json', '**/vcpkg.json') }}
 
       - name: Setup vcpkg
         if: steps.cache-vcpkg.outputs.cache-hit != 'true'
@@ -169,32 +169,32 @@ jobs:
         run: |
           cd ${{ env.VCPKG_ROOT }}
           
-          # Base dependencies
+          # Base dependencies - using shared libraries for MSVC compatibility
           Write-Host "Installing base dependencies..."
-          .\vcpkg.exe install zlib:x64-windows-static
-          .\vcpkg.exe install openssl:x64-windows-static
+          .\vcpkg.exe install zlib:x64-windows
+          .\vcpkg.exe install openssl:x64-windows
           
           # Conditional dependencies based on inputs
           Write-Host "Installing conditional dependencies..."
           if ("${{ github.event.inputs.enable_libopus || 'true' }}" -eq "true") {
             Write-Host "Installing Opus..."
-            .\vcpkg.exe install opus:x64-windows-static
+            .\vcpkg.exe install opus:x64-windows
           }
           if ("${{ github.event.inputs.enable_libx264 || 'true' }}" -eq "true") {
             Write-Host "Installing x264..."
-            .\vcpkg.exe install x264:x64-windows-static
+            .\vcpkg.exe install x264:x64-windows
           }
           if ("${{ github.event.inputs.enable_libx265 || 'true' }}" -eq "true") {
             Write-Host "Installing x265..."
-            .\vcpkg.exe install x265:x64-windows-static
+            .\vcpkg.exe install x265:x64-windows
           }
           if ("${{ github.event.inputs.enable_libvpx || 'true' }}" -eq "true") {
             Write-Host "Installing libvpx..."
-            .\vcpkg.exe install libvpx:x64-windows-static
+            .\vcpkg.exe install libvpx:x64-windows
           }
           if ("${{ github.event.inputs.enable_libaom || 'false' }}" -eq "true") {
             Write-Host "Installing AOM..."
-            .\vcpkg.exe install aom:x64-windows-static
+            .\vcpkg.exe install aom:x64-windows
           }
 
       - name: Save vcpkg Cache
@@ -206,15 +206,15 @@ jobs:
             ${{ env.VCPKG_ROOT }}/installed
             ${{ env.VCPKG_ROOT }}/buildtrees
             ${{ env.VCPKG_ROOT }}/packages
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', '**/vcpkg.json') }}
+          key: vcpkg-shared-${{ runner.os }}-${{ hashFiles('vcpkg.json', '**/vcpkg.json') }}
 
       - name: Configure FFmpeg Build
         run: |
           # Use forward slashes for Unix-style paths in configure script
           $CUDA_INCLUDE = $env:CUDA_PATH -replace '\\', '/'
           $CUDA_LIB = $env:CUDA_PATH -replace '\\', '/'
-          $VCPKG_INCLUDE = "${{ env.VCPKG_ROOT }}\installed\x64-windows-static\include" -replace '\\', '/'
-          $VCPKG_LIB = "${{ env.VCPKG_ROOT }}\installed\x64-windows-static\lib" -replace '\\', '/'
+          $VCPKG_INCLUDE = "${{ env.VCPKG_ROOT }}\installed\x64-windows\include" -replace '\\', '/'
+          $VCPKG_LIB = "${{ env.VCPKG_ROOT }}\installed\x64-windows\lib" -replace '\\', '/'
           
           $CONFIGURE_OPTS = @(
             "--toolchain=msvc",
@@ -227,7 +227,6 @@ jobs:
             "--extra-libs=cufft.lib",
             "--extra-libs=curand.lib",
             "--extra-libs=cublas.lib",
-            "--pkg-config-flags=--static",
             "--extra-cflags=-I`"$VCPKG_INCLUDE`"",
             "--extra-ldflags=-L`"$VCPKG_LIB`"",
             "--disable-w32threads",
