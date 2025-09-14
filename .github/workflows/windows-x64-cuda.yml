@@ -1,0 +1,367 @@
+name: Windows x64 CUDA v13 Build with Media Autobuild Suite
+
+on:
+  push:
+    branches: [main, master, release/8.0]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'FFmpeg build type'
+        type: choice
+        options:
+          - 'light'
+          - 'zeranoe'
+          - 'full'
+        default: 'full'
+      enable_cuda_features:
+        description: 'Enable CUDA hardware acceleration (nvenc, nvdec, libnpp)'
+        type: boolean
+        default: true
+      enable_non_free:
+        description: 'Enable non-free components (required for CUDA)'
+        type: boolean
+        default: true
+      architecture:
+        description: 'Target architecture'
+        type: choice
+        options:
+          - '64bit'
+          - '32bit'
+          - 'both'
+        default: '64bit'
+      delete_build_after:
+        description: 'Delete build folder after compilation to save space'
+        type: boolean
+        default: true
+
+env:
+  CUDA_SDK_VERSION: "13.0"
+  BUILD_DIR: "C:\\mabs"
+
+jobs:
+  build:
+    name: Build FFmpeg with Media Autobuild Suite
+    runs-on: windows-2022
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup build environment
+        shell: powershell
+        run: |
+          # Set short path to avoid issues with long paths and spaces
+          $env:BUILD_DIR = "${{ env.BUILD_DIR }}"
+          Write-Host "Using build directory: $env:BUILD_DIR"
+          
+          # Create build directory
+          if (!(Test-Path $env:BUILD_DIR)) {
+            New-Item -ItemType Directory -Force -Path $env:BUILD_DIR
+          }
+
+      - name: Cache Media Autobuild Suite
+        id: cache-mabs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.BUILD_DIR }}
+            !${{ env.BUILD_DIR }}/build
+            !${{ env.BUILD_DIR }}/local32
+            !${{ env.BUILD_DIR }}/local64
+          key: mabs-${{ runner.os }}-${{ hashFiles('.github/workflows/windows-x64-cuda.yml') }}
+
+      - name: Download Media Autobuild Suite
+        if: steps.cache-mabs.outputs.cache-hit != 'true'
+        shell: powershell
+        run: |
+          $env:BUILD_DIR = "${{ env.BUILD_DIR }}"
+          Write-Host "Downloading Media Autobuild Suite..."
+          
+          $zipUrl = "https://github.com/m-ab-s/media-autobuild_suite/archive/master.zip"
+          $zipPath = "$env:BUILD_DIR\mabs.zip"
+          
+          Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $env:BUILD_DIR -Force
+          
+          # Move files from subdirectory to root
+          Move-Item "$env:BUILD_DIR\media-autobuild_suite-master\*" $env:BUILD_DIR -Force
+          Remove-Item "$env:BUILD_DIR\media-autobuild_suite-master" -Force
+          Remove-Item $zipPath -Force
+          
+          Write-Host "Media Autobuild Suite downloaded successfully"
+
+      - name: Cache CUDA SDK
+        id: cache-cuda
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v${{ env.CUDA_SDK_VERSION }}
+            C:\Program Files\NVIDIA Corporation\Nsight*
+          key: cuda-v${{ env.CUDA_SDK_VERSION }}-${{ runner.os }}
+
+      - name: Download and Install CUDA SDK
+        if: steps.cache-cuda.outputs.cache-hit != 'true' && inputs.enable_cuda_features == true
+        shell: powershell
+        run: |
+          Write-Host "Downloading CUDA SDK v${{ env.CUDA_SDK_VERSION }}..."
+          $cudaUrl = "https://developer.download.nvidia.com/compute/cuda/${{ env.CUDA_SDK_VERSION }}.0/network_installers/cuda_${{ env.CUDA_SDK_VERSION }}.0_windows_network.exe"
+          $cudaInstaller = "cuda_installer.exe"
+          
+          Invoke-WebRequest -Uri $cudaUrl -OutFile $cudaInstaller
+          
+          Write-Host "Installing CUDA SDK silently..."
+          Start-Process -Wait -FilePath $cudaInstaller -ArgumentList "-s"
+          
+          # Verify installation
+          $cudaPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v${{ env.CUDA_SDK_VERSION }}\bin\nvcc.exe"
+          if (Test-Path $cudaPath) {
+            Write-Host "CUDA SDK v${{ env.CUDA_SDK_VERSION }} installed successfully"
+            # Set environment variables for the session
+            $env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v${{ env.CUDA_SDK_VERSION }}"
+            echo "CUDA_PATH=$env:CUDA_PATH" >> $env:GITHUB_ENV
+            echo "CUDA_PATH_V${{ env.CUDA_SDK_VERSION | Replace '.', '_' }}=$env:CUDA_PATH" >> $env:GITHUB_ENV
+          } else {
+            throw "CUDA SDK installation failed"
+          }
+
+      - name: Configure Media Autobuild Suite
+        shell: powershell
+        run: |
+          $env:BUILD_DIR = "${{ env.BUILD_DIR }}"
+          
+          # Create configuration file
+          $configFile = "$env:BUILD_DIR\build\media-autobuild_suite.ini"
+          $configDir = Split-Path $configFile -Parent
+          if (!(Test-Path $configDir)) {
+            New-Item -ItemType Directory -Force -Path $configDir
+          }
+          
+          Write-Host "Creating configuration file..."
+          
+          $arch = "${{ inputs.architecture || '64bit' }}"
+          $license = if ("${{ inputs.enable_non_free }}" -eq "true") { "2" } else { "1" }
+          $buildType = switch ("${{ inputs.build_type || 'full' }}") {
+            "light" { "1" }
+            "zeranoe" { "2" }
+            "full" { "4" }
+            default { "4" }
+          }
+          
+          $config = @"
+[compiler list]
+arch=$arch
+license=$license
+standalone=y
+bmx=n
+bmx_config=n
+cyanrip=n
+jq=n
+jo=n
+ripgrep=n
+curl=n
+rtmpdump=n
+wget=n
+aria2=n
+m-ab-s WinSSL=n
+ffmpeg=y
+ffmpegUpdate=y
+ffmpegChoice=$buildType
+mediainfo=n
+sox=n
+flac=n
+fdkaac=n
+mp4box=n
+mp3lame=n
+speex=n
+vorbis=n
+opus=n
+vpx=n
+aom=n
+rav1e=n
+svtav1=n
+dav1d=n
+vvenc=n
+vvdec=n
+uvg266=n
+x264=n
+x265=n
+kvazaar=n
+other265=n
+flv=n
+deleteSource=y
+strip=y
+pack=y
+logging=y
+bmx2=n
+vlc=n
+numCores=0
+deleteSource=${{ inputs.delete_build_after == true && 'y' || 'n' }}
+ccache=n
+"@
+          
+          $config | Out-File -FilePath $configFile -Encoding ascii
+          
+          Write-Host "Configuration file created at: $configFile"
+
+      - name: Prepare custom FFmpeg options
+        if: inputs.enable_cuda_features == true
+        shell: powershell
+        run: |
+          $env:BUILD_DIR = "${{ env.BUILD_DIR }}"
+          
+          # Create custom FFmpeg options for CUDA support
+          $ffmpegOptionsFile = "$env:BUILD_DIR\build\ffmpeg_options.txt"
+          
+          $cudaOptions = @"
+# CUDA Hardware Acceleration Options
+--enable-nonfree
+--enable-cuda-nvcc
+--enable-cuda-llvm
+--enable-cuvid
+--enable-nvenc
+--enable-nvdec
+--enable-libnpp
+--enable-ffnvcodec
+# CUDA filters require non-free license
+--enable-cuda-filters
+"@
+          
+          $cudaOptions | Out-File -FilePath $ffmpegOptionsFile -Encoding ascii
+          
+          Write-Host "Custom FFmpeg options created for CUDA support"
+          Write-Host "Options file content:"
+          Get-Content $ffmpegOptionsFile
+
+      - name: Run Media Autobuild Suite
+        shell: cmd
+        working-directory: ${{ env.BUILD_DIR }}
+        run: |
+          echo Starting Media Autobuild Suite build...
+          echo Working directory: %CD%
+          
+          REM Set CUDA environment if enabled
+          if "${{ inputs.enable_cuda_features }}" == "true" (
+            set CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v${{ env.CUDA_SDK_VERSION }}
+            set CUDA_PATH_V13_0=%CUDA_PATH%
+            echo CUDA enabled at: %CUDA_PATH%
+          )
+          
+          REM Run the media autobuild suite
+          call media-autobuild_suite.bat
+          
+          echo Build completed successfully!
+
+      - name: Validate build output
+        shell: powershell
+        run: |
+          $env:BUILD_DIR = "${{ env.BUILD_DIR }}"
+          $arch = "${{ inputs.architecture || '64bit' }}"
+          
+          if ($arch -eq "64bit" -or $arch -eq "both") {
+            $ffmpegPath = "$env:BUILD_DIR\local64\bin-video\ffmpeg.exe"
+            $ffprobePath = "$env:BUILD_DIR\local64\bin-video\ffprobe.exe"
+            
+            if (Test-Path $ffmpegPath) {
+              Write-Host "✅ 64-bit FFmpeg build successful!"
+              
+              # Test basic functionality
+              & $ffmpegPath -version
+              
+              # Test CUDA features if enabled
+              if ("${{ inputs.enable_cuda_features }}" -eq "true") {
+                Write-Host "Testing CUDA features..."
+                & $ffmpegPath -hide_banner -encoders | Select-String "nvenc"
+                & $ffmpegPath -hide_banner -decoders | Select-String "cuvid"
+                & $ffmpegPath -hide_banner -hwaccels | Select-String "cuda"
+                & $ffmpegPath -hide_banner -filters | Select-String "npp"
+              }
+            } else {
+              throw "64-bit FFmpeg build failed - executable not found"
+            }
+          }
+
+      - name: Package build artifacts
+        shell: powershell
+        run: |
+          $env:BUILD_DIR = "${{ env.BUILD_DIR }}"
+          $arch = "${{ inputs.architecture || '64bit' }}"
+          $buildType = "${{ inputs.build_type || 'full' }}"
+          $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+          
+          Write-Host "Creating build artifacts..."
+          
+          # Create artifacts directory
+          $artifactsDir = "$env:BUILD_DIR\artifacts"
+          if (!(Test-Path $artifactsDir)) {
+            New-Item -ItemType Directory -Force -Path $artifactsDir
+          }
+          
+          # Package 64-bit binaries if built
+          if ($arch -eq "64bit" -or $arch -eq "both") {
+            $binDir = "$env:BUILD_DIR\local64\bin-video"
+            if (Test-Path $binDir) {
+              $zipName = "ffmpeg-$buildType-win64-cuda-$timestamp.zip"
+              $zipPath = "$artifactsDir\$zipName"
+              
+              # Add build info
+              $buildInfo = @"
+FFmpeg Windows x64 CUDA Build
+=============================
+Build Type: $buildType
+Architecture: x64 (64-bit)
+CUDA Support: ${{ inputs.enable_cuda_features }}
+Build Date: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
+Workflow: ${{ github.workflow }}
+Commit: ${{ github.sha }}
+
+Features:
+- NVIDIA Hardware Encoding (NVENC)
+- NVIDIA Hardware Decoding (NVDEC) 
+- CUDA Video Filters
+- NPP Hardware Acceleration
+- Hardware-accelerated scaling and filtering
+
+Usage Examples:
+# Hardware-accelerated transcoding
+ffmpeg -hwaccel cuda -hwaccel_output_format cuda -i input.mp4 -c:v h264_nvenc -preset fast -b:v 5M output.mp4
+
+# NPP scaling filter  
+ffmpeg -hwaccel cuda -hwaccel_output_format cuda -i input.mp4 -vf scale_npp=1920:1080 -c:v h264_nvenc output.mp4
+
+# Multiple output with hardware acceleration
+ffmpeg -hwaccel cuda -hwaccel_output_format cuda -i input.mp4 -vf scale_npp=1920:1080 -c:v h264_nvenc -b:v 8M output_1080p.mp4 -vf scale_npp=1280:720 -c:v h264_nvenc -b:v 5M output_720p.mp4
+"@
+              
+              $buildInfo | Out-File "$binDir\BUILD_INFO.txt" -Encoding utf8
+              
+              Compress-Archive -Path "$binDir\*" -DestinationPath $zipPath -CompressionLevel Optimal
+              Write-Host "✅ Created: $zipName"
+            }
+          }
+
+      - name: Upload build artifacts  
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-cuda-build-${{ github.run_number }}
+          path: ${{ env.BUILD_DIR }}\artifacts\*.zip
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Cleanup temporary files
+        if: always()
+        shell: powershell
+        run: |
+          $env:BUILD_DIR = "${{ env.BUILD_DIR }}"
+          
+          # Clean up build directory if requested
+          if ("${{ inputs.delete_build_after }}" -eq "true") {
+            Write-Host "Cleaning up build directory..."
+            $buildFolder = "$env:BUILD_DIR\build"
+            if (Test-Path $buildFolder) {
+              Remove-Item $buildFolder -Recurse -Force -ErrorAction SilentlyContinue
+              Write-Host "Build folder cleaned up"
+            }
+          }
+          
+          Write-Host "Cleanup completed"
