@@ -144,6 +144,15 @@ jobs:
         run: |
           echo "C:\tools\nasm\nasm-${{ env.NASM_VERSION }}" >> $env:GITHUB_PATH
           echo "C:\tools\yasm" >> $env:GITHUB_PATH
+          
+          # Setup pkg-config for dependency detection
+          if (Test-Path "${{ env.VCPKG_ROOT }}\installed\x64-windows-static\tools\pkgconf") {
+            echo "${{ env.VCPKG_ROOT }}\installed\x64-windows-static\tools\pkgconf" >> $env:GITHUB_PATH
+          }
+          
+          # Set PKG_CONFIG_PATH for ffnvcodec and other dependencies
+          $env:PKG_CONFIG_PATH = "${{ env.VCPKG_ROOT }}\installed\x64-windows-static\lib\pkgconfig"
+          echo "PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH" >> $env:GITHUB_ENV
 
       - name: Cache vcpkg
         id: cache-vcpkg
@@ -173,6 +182,11 @@ jobs:
           Write-Host "Installing base dependencies..."
           .\vcpkg.exe install zlib:x64-windows-static
           .\vcpkg.exe install openssl:x64-windows-static
+          .\vcpkg.exe install pkgconf:x64-windows-static
+          
+          # CUDA/NVENC dependencies - essential for CUDA functionality
+          Write-Host "Installing CUDA dependencies..."
+          .\vcpkg.exe install ffnvcodec:x64-windows-static
           
           # Conditional dependencies based on inputs
           Write-Host "Installing conditional dependencies..."
@@ -251,6 +265,9 @@ jobs:
             $CONFIGURE_OPTS += "--enable-nonfree"
           }
           
+          # Enable core CUDA functionality - ffnvcodec is essential for all CUDA features
+          $CONFIGURE_OPTS += "--enable-ffnvcodec"
+          
           if ("${{ github.event.inputs.enable_cuda_nvcc || 'true' }}" -eq "true") {
             $CONFIGURE_OPTS += "--enable-cuda-nvcc", "--enable-cuda-llvm"
           }
@@ -298,7 +315,7 @@ jobs:
           if (Test-Path "ffbuild/config.h") {
             Write-Host "Checking enabled features:"
             bash -c "grep -E 'HAVE_(CUDA|NVENC|NVDEC|CUVID)' ffbuild/config.h | head -10" 2>$null
-            bash -c "grep -E 'CONFIG_(LIBX264|LIBX265|LIBOPUS|LIBVPX|LIBAOM)' ffbuild/config.h | head -10" 2>$null
+            bash -c "grep -E 'CONFIG_(FFNVCODEC|LIBX264|LIBX265|LIBOPUS|LIBVPX|LIBAOM)' ffbuild/config.h | head -10" 2>$null
           }
           Write-Host "=============================================="
 
@@ -350,6 +367,9 @@ jobs:
           
           Write-Host "Testing CUDA decoders availability..."
           .\ffmpeg.exe -hide_banner -decoders | Select-String cuvid
+          
+          Write-Host "Testing FFnvcodec support..."
+          .\ffmpeg.exe -hide_banner -hwaccels | Select-String cuda
           
           Write-Host "Testing basic encoding with testsrc..."
           .\ffmpeg.exe -f lavfi -i testsrc=duration=5:size=640x480:rate=30 -c:v mpeg4 -f null -
