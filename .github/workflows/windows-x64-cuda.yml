@@ -55,7 +55,7 @@ jobs:
   build:
     name: Build FFmpeg with CUDA v13
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 90
 
     steps:
       - name: Checkout repository
