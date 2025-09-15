@@ -27,7 +27,11 @@
 
 /* CUDA 13+ NPP API compatibility */
 #ifdef NPP_VERSION_MAJOR
-#if NPP_VERSION_MAJOR >= 13 || (NPP_VERSION_MAJOR >= 12 && NPP_VERSION_MINOR >= 1)
+#if NPP_VERSION_MAJOR >= 13
+#define HAVE_NPP_CONTEXT_API 1
+#include <nppi_geometry_transforms.h>
+#include <nppi_data_exchange_and_initialization.h>
+#elif NPP_VERSION_MAJOR >= 12 && NPP_VERSION_MINOR >= 1
 #define HAVE_NPP_CONTEXT_API 1
 #include <nppi_geometry_transforms.h>
 #endif
@@ -35,7 +39,7 @@
 
 /* Compatibility macros for API changes */
 #if defined(HAVE_NPP_CONTEXT_API) && NPP_VERSION_MAJOR >= 13
-/* In CUDA 13+, some functions have been removed and need different approaches */
+/* In CUDA 13+, deprecated functions are removed and need context-aware versions */
 #define CUDA13_API_CHANGES 1
 #endif
 
@@ -747,12 +751,21 @@ static int nppscale_resize(AVFilterContext *ctx, NPPScaleStageContext *stage,
         int ow = stage->planes_out[i].width;
         int oh = stage->planes_out[i].height;
 
-        /* Use nppiResize_8u_C1R for both old and new versions */
+#ifdef CUDA13_API_CHANGES
+        /* Use context-aware function for CUDA 13+ */
+        err = nppiResize_8u_C1R_Ctx(in->data[i], in->linesize[i], (NppiSize){ iw, ih },
+                                    (NppiRect){ 0, 0, iw, ih },
+                                    out->data[i], out->linesize[i], (NppiSize){ ow, oh },
+                                    (NppiRect){ 0, 0, ow, oh },
+                                    s->interp_algo, s->npp_stream_ctx);
+#else
+        /* Use legacy function for older CUDA versions */
         err = nppiResize_8u_C1R(in->data[i], in->linesize[i], (NppiSize){ iw, ih },
                                 (NppiRect){ 0, 0, iw, ih },
                                 out->data[i], out->linesize[i], (NppiSize){ ow, oh },
                                 (NppiRect){ 0, 0, ow, oh },
                                 s->interp_algo);
+#endif
         if (err != NPP_SUCCESS) {
             av_log(ctx, AV_LOG_ERROR, "NPP resize error: %d\n", err);
             return AVERROR_UNKNOWN;

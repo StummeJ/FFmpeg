@@ -26,14 +26,18 @@
 
 /* CUDA 13+ NPP API compatibility */
 #ifdef NPP_VERSION_MAJOR
-#if NPP_VERSION_MAJOR >= 13 || (NPP_VERSION_MAJOR >= 12 && NPP_VERSION_MINOR >= 1)
+#if NPP_VERSION_MAJOR >= 13
 #define HAVE_NPP_CONTEXT_API 1
+#include <nppi_filtering_functions.h>
+#elif NPP_VERSION_MAJOR >= 12 && NPP_VERSION_MINOR >= 1
+#define HAVE_NPP_CONTEXT_API 1
+#include <nppi_filtering_functions.h>
 #endif
 #endif
 
 /* Compatibility macros for API changes */
 #if defined(HAVE_NPP_CONTEXT_API) && NPP_VERSION_MAJOR >= 13
-/* In CUDA 13+, some functions have been removed and need different approaches */
+/* In CUDA 13+, deprecated functions are removed and need context-aware versions */
 #define CUDA13_API_CHANGES 1
 #endif
 
@@ -183,10 +187,16 @@ static int nppsharpen_sharpen(AVFilterContext* ctx, AVFrame* out, AVFrame* in)
         int ow = AV_CEIL_RSHIFT(in->width, (i == 1 || i == 2) ? desc->log2_chroma_w : 0);
         int oh = AV_CEIL_RSHIFT(in->height, (i == 1 || i == 2) ? desc->log2_chroma_h : 0);
 
-        /* Use standard function for CUDA 13 compatibility */
+        /* Use context-aware function for CUDA compatibility */
+#ifdef CUDA13_API_CHANGES
+        NppStatus err = nppiFilterSharpenBorder_8u_C1R_Ctx(
+            in->data[i], in->linesize[i], (NppiSize){ow, oh}, (NppiPoint){0, 0},
+            out->data[i], out->linesize[i], (NppiSize){ow, oh}, s->border_type, s->npp_stream_ctx);
+#else
         NppStatus err = nppiFilterSharpenBorder_8u_C1R(
             in->data[i], in->linesize[i], (NppiSize){ow, oh}, (NppiPoint){0, 0},
             out->data[i], out->linesize[i], (NppiSize){ow, oh}, s->border_type);
+#endif
         if (err != NPP_SUCCESS) {
             av_log(ctx, AV_LOG_ERROR, "NPP sharpen error: %d\n", err);
             return AVERROR_EXTERNAL;
