@@ -33,6 +33,12 @@
 #endif
 #endif
 
+/* Compatibility macros for API changes */
+#if defined(HAVE_NPP_CONTEXT_API) && NPP_VERSION_MAJOR >= 13
+/* In CUDA 13+, some functions have been removed and need different approaches */
+#define CUDA13_API_CHANGES 1
+#endif
+
 #include "libavutil/hwcontext.h"
 #include "libavutil/hwcontext_cuda_internal.h"
 #include "libavutil/cuda_check.h"
@@ -712,18 +718,10 @@ static int nppscale_deinterleave(AVFilterContext *ctx, NPPScaleStageContext *sta
 
     switch (in_frames_ctx->sw_format) {
     case AV_PIX_FMT_NV12:
-        /* Use context-aware API for CUDA 13+ compatibility */
-#ifdef HAVE_NPP_CONTEXT_API
-        err = nppiYCbCr420_8u_P2P3R_Ctx(in->data[0], in->linesize[0],
-                                        in->data[1], in->linesize[1],
-                                        out->data, out->linesize,
-                                        (NppiSize){ in->width, in->height }, s->npp_stream_ctx);
-#else
         err = nppiYCbCr420_8u_P2P3R(in->data[0], in->linesize[0],
                                     in->data[1], in->linesize[1],
                                     out->data, out->linesize,
                                     (NppiSize){ in->width, in->height });
-#endif
         break;
     default:
         return AVERROR_BUG;
@@ -749,22 +747,12 @@ static int nppscale_resize(AVFilterContext *ctx, NPPScaleStageContext *stage,
         int ow = stage->planes_out[i].width;
         int oh = stage->planes_out[i].height;
 
-        /* Use context-aware API for CUDA 13+ compatibility */
-#ifdef HAVE_NPP_CONTEXT_API
-        err = nppiResize_8u_C1R_Ctx(in->data[i], in->linesize[i], (NppiSize){ iw, ih },
-                                    (NppiRect){ 0, 0, iw, ih },
-                                    out->data[i], out->linesize[i],
-                                    (NppiSize){ ow, oh },
-                                    (NppiRect){ 0, 0, ow, oh },
-                                    s->interp_algo, s->npp_stream_ctx);
-#else
+        /* Use nppiResize_8u_C1R for both old and new versions */
         err = nppiResize_8u_C1R(in->data[i], in->linesize[i], (NppiSize){ iw, ih },
                                 (NppiRect){ 0, 0, iw, ih },
-                                out->data[i], out->linesize[i],
-                                (NppiSize){ ow, oh },
+                                out->data[i], out->linesize[i], (NppiSize){ ow, oh },
                                 (NppiRect){ 0, 0, ow, oh },
                                 s->interp_algo);
-#endif
         if (err != NPP_SUCCESS) {
             av_log(ctx, AV_LOG_ERROR, "NPP resize error: %d\n", err);
             return AVERROR_UNKNOWN;
@@ -783,20 +771,11 @@ static int nppscale_interleave(AVFilterContext *ctx, NPPScaleStageContext *stage
 
     switch (out_frames_ctx->sw_format) {
     case AV_PIX_FMT_NV12:
-        /* Use context-aware API for CUDA 13+ compatibility */
-#ifdef HAVE_NPP_CONTEXT_API
-        err = nppiYCbCr420_8u_P3P2R_Ctx((const uint8_t**)in->data,
-                                        in->linesize,
-                                        out->data[0], out->linesize[0],
-                                        out->data[1], out->linesize[1],
-                                        (NppiSize){ in->width, in->height }, s->npp_stream_ctx);
-#else
         err = nppiYCbCr420_8u_P3P2R((const uint8_t**)in->data,
                                     in->linesize,
                                     out->data[0], out->linesize[0],
                                     out->data[1], out->linesize[1],
                                     (NppiSize){ in->width, in->height });
-#endif
         break;
     default:
         return AVERROR_BUG;

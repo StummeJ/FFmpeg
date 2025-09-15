@@ -28,6 +28,12 @@
 #endif
 #endif
 
+/* Compatibility macros for API changes */
+#if defined(HAVE_NPP_CONTEXT_API) && NPP_VERSION_MAJOR >= 13
+/* In CUDA 13+, some functions have been removed and need different approaches */
+#define CUDA13_API_CHANGES 1
+#endif
+
 #include "libavutil/common.h"
 #include "libavutil/hwcontext.h"
 #include "libavutil/hwcontext_cuda_internal.h"
@@ -322,20 +328,12 @@ static int npptranspose_rotate(AVFilterContext *ctx, NPPTransposeStageContext *s
         int shiftw = (s->dir == NPP_TRANSPOSE_CLOCK  || s->dir == NPP_TRANSPOSE_CLOCK_FLIP) ? ow - 1 : 0;
         int shifth = (s->dir == NPP_TRANSPOSE_CCLOCK || s->dir == NPP_TRANSPOSE_CLOCK_FLIP) ? oh - 1 : 0;
 
-        /* Use context-aware API for CUDA 13+ compatibility */
-#ifdef HAVE_NPP_CONTEXT_API
-        err = nppiRotate_8u_C1R_Ctx(in->data[i], (NppiSize){ iw, ih },
-                                    in->linesize[i], (NppiRect){ 0, 0, iw, ih },
-                                    out->data[i], out->linesize[i],
-                                    (NppiRect){ 0, 0, ow, oh },
-                                    angle, shiftw, shifth, NPPI_INTER_NN, s->npp_stream_ctx);
-#else
+        /* Use standard functions for CUDA 13 compatibility */
         err = nppiRotate_8u_C1R(in->data[i], (NppiSize){ iw, ih },
                                 in->linesize[i], (NppiRect){ 0, 0, iw, ih },
                                 out->data[i], out->linesize[i],
                                 (NppiRect){ 0, 0, ow, oh },
                                 angle, shiftw, shifth, NPPI_INTER_NN);
-#endif
         if (err != NPP_SUCCESS) {
             av_log(ctx, AV_LOG_ERROR, "NPP rotate error: %d\n", err);
             return AVERROR_UNKNOWN;
@@ -356,16 +354,10 @@ static int npptranspose_transpose(AVFilterContext *ctx, NPPTransposeStageContext
         int iw = stage->planes_in[i].width;
         int ih = stage->planes_in[i].height;
 
-        /* Use context-aware API for CUDA 13+ compatibility */
-#ifdef HAVE_NPP_CONTEXT_API
-        err = nppiTranspose_8u_C1R_Ctx(in->data[i], in->linesize[i],
-                                       out->data[i], out->linesize[i],
-                                       (NppiSize){ iw, ih }, s->npp_stream_ctx);
-#else
+        /* Use standard function for CUDA 13 compatibility */
         err = nppiTranspose_8u_C1R(in->data[i], in->linesize[i],
                                    out->data[i], out->linesize[i],
                                    (NppiSize){ iw, ih });
-#endif
         if (err != NPP_SUCCESS) {
             av_log(ctx, AV_LOG_ERROR, "NPP transpose error: %d\n", err);
             return AVERROR_UNKNOWN;
