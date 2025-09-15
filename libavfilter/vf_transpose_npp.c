@@ -20,6 +20,14 @@
 #include <stdio.h>
 #include <string.h>
 
+/* CUDA 13+ NPP API compatibility */
+#ifdef NPP_VERSION_MAJOR
+#if NPP_VERSION_MAJOR >= 13 || (NPP_VERSION_MAJOR >= 12 && NPP_VERSION_MINOR >= 1)
+#define HAVE_NPP_CONTEXT_API 1
+#include <nppi_geometry_transforms.h>
+#endif
+#endif
+
 #include "libavutil/common.h"
 #include "libavutil/hwcontext.h"
 #include "libavutil/hwcontext_cuda_internal.h"
@@ -78,6 +86,7 @@ typedef struct NPPTransposeContext {
 
     int passthrough;    ///< PassthroughType, landscape passthrough mode enabled
     int dir;            ///< TransposeDir
+    NppStreamContext npp_stream_ctx;  ///< NPP stream context for CUDA 13+
 } NPPTransposeContext;
 
 static int npptranspose_init(AVFilterContext *ctx)
@@ -94,6 +103,10 @@ static int npptranspose_init(AVFilterContext *ctx)
     s->tmp_frame = av_frame_alloc();
     if (!s->tmp_frame)
         return AVERROR(ENOMEM);
+
+    /* Initialize NPP stream context for CUDA 13+ compatibility */
+    memset(&s->npp_stream_ctx, 0, sizeof(s->npp_stream_ctx));
+    s->npp_stream_ctx.hStream = 0; /* Use default stream */
 
     return 0;
 }
@@ -309,11 +322,20 @@ static int npptranspose_rotate(AVFilterContext *ctx, NPPTransposeStageContext *s
         int shiftw = (s->dir == NPP_TRANSPOSE_CLOCK  || s->dir == NPP_TRANSPOSE_CLOCK_FLIP) ? ow - 1 : 0;
         int shifth = (s->dir == NPP_TRANSPOSE_CCLOCK || s->dir == NPP_TRANSPOSE_CLOCK_FLIP) ? oh - 1 : 0;
 
+        /* Use context-aware API for CUDA 13+ compatibility */
+#ifdef HAVE_NPP_CONTEXT_API
+        err = nppiRotate_8u_C1R_Ctx(in->data[i], (NppiSize){ iw, ih },
+                                    in->linesize[i], (NppiRect){ 0, 0, iw, ih },
+                                    out->data[i], out->linesize[i],
+                                    (NppiRect){ 0, 0, ow, oh },
+                                    angle, shiftw, shifth, NPPI_INTER_NN, s->npp_stream_ctx);
+#else
         err = nppiRotate_8u_C1R(in->data[i], (NppiSize){ iw, ih },
                                 in->linesize[i], (NppiRect){ 0, 0, iw, ih },
                                 out->data[i], out->linesize[i],
                                 (NppiRect){ 0, 0, ow, oh },
                                 angle, shiftw, shifth, NPPI_INTER_NN);
+#endif
         if (err != NPP_SUCCESS) {
             av_log(ctx, AV_LOG_ERROR, "NPP rotate error: %d\n", err);
             return AVERROR_UNKNOWN;
@@ -326,6 +348,7 @@ static int npptranspose_rotate(AVFilterContext *ctx, NPPTransposeStageContext *s
 static int npptranspose_transpose(AVFilterContext *ctx, NPPTransposeStageContext *stage,
                                   AVFrame *out, AVFrame *in)
 {
+    NPPTransposeContext *s = ctx->priv;
     NppStatus err;
     int i;
 
@@ -333,9 +356,16 @@ static int npptranspose_transpose(AVFilterContext *ctx, NPPTransposeStageContext
         int iw = stage->planes_in[i].width;
         int ih = stage->planes_in[i].height;
 
+        /* Use context-aware API for CUDA 13+ compatibility */
+#ifdef HAVE_NPP_CONTEXT_API
+        err = nppiTranspose_8u_C1R_Ctx(in->data[i], in->linesize[i],
+                                       out->data[i], out->linesize[i],
+                                       (NppiSize){ iw, ih }, s->npp_stream_ctx);
+#else
         err = nppiTranspose_8u_C1R(in->data[i], in->linesize[i],
                                    out->data[i], out->linesize[i],
                                    (NppiSize){ iw, ih });
+#endif
         if (err != NPP_SUCCESS) {
             av_log(ctx, AV_LOG_ERROR, "NPP transpose error: %d\n", err);
             return AVERROR_UNKNOWN;
