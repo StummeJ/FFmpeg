@@ -21,20 +21,27 @@
 #include <string.h>
 
 /* CUDA 13+ NPP API compatibility */
-#ifdef NPP_VERSION_MAJOR
-#if NPP_VERSION_MAJOR >= 13
-#define HAVE_NPP_CONTEXT_API 1
-#include <nppi_geometry_transforms.h>
-#elif NPP_VERSION_MAJOR >= 12 && NPP_VERSION_MINOR >= 1
-#define HAVE_NPP_CONTEXT_API 1
-#include <nppi_geometry_transforms.h>
-#endif
+#include <npp.h>
+
+/* CUDA 13 removed legacy NPP functions completely
+ * Use context-aware versions which work on CUDA 12.1+ and CUDA 13+ */
+
+/* Check if we have modern CUDA/NPP - multiple version detection methods */
+#if defined(CUDA_VERSION) && CUDA_VERSION >= 12010
+    #define USE_NPP_CONTEXT_API 1
+#elif defined(__CUDA_API_VERSION) && __CUDA_API_VERSION >= 12010
+    #define USE_NPP_CONTEXT_API 1  
+#elif defined(NPP_VERSION_MAJOR)
+    #if NPP_VERSION_MAJOR >= 12
+        #define USE_NPP_CONTEXT_API 1
+    #endif
+#else
+    /* Default to context-aware API for unknown versions - safer for CUDA 13+ */
+    #define USE_NPP_CONTEXT_API 1
 #endif
 
-/* Compatibility macros for API changes */
-#if defined(HAVE_NPP_CONTEXT_API) && NPP_VERSION_MAJOR >= 13
-/* In CUDA 13+, deprecated functions are removed and need context-aware versions */
-#define CUDA13_API_CHANGES 1
+#ifdef USE_NPP_CONTEXT_API
+#include <nppi_geometry_transforms.h>
 #endif
 
 #include "libavutil/common.h"
@@ -332,7 +339,7 @@ static int npptranspose_rotate(AVFilterContext *ctx, NPPTransposeStageContext *s
         int shifth = (s->dir == NPP_TRANSPOSE_CCLOCK || s->dir == NPP_TRANSPOSE_CLOCK_FLIP) ? oh - 1 : 0;
 
         /* Use context-aware function for CUDA compatibility */
-#ifdef CUDA13_API_CHANGES
+#ifdef USE_NPP_CONTEXT_API
         err = nppiRotate_8u_C1R_Ctx(in->data[i], (NppiSize){ iw, ih },
                                     in->linesize[i], (NppiRect){ 0, 0, iw, ih },
                                     out->data[i], out->linesize[i],
@@ -366,7 +373,7 @@ static int npptranspose_transpose(AVFilterContext *ctx, NPPTransposeStageContext
         int ih = stage->planes_in[i].height;
 
         /* Use context-aware function for CUDA compatibility */
-#ifdef CUDA13_API_CHANGES
+#ifdef USE_NPP_CONTEXT_API
         err = nppiTranspose_8u_C1R_Ctx(in->data[i], in->linesize[i],
                                        out->data[i], out->linesize[i],
                                        (NppiSize){ iw, ih }, s->npp_stream_ctx);
