@@ -19,6 +19,7 @@
 #include "vf_amf_common.h"
 
 #include "libavutil/avassert.h"
+#include "libavutil/hwcontext.h"
 #include "avfilter.h"
 #include "avfilter_internal.h"
 #include "formats.h"
