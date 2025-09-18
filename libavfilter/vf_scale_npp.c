@@ -41,8 +41,14 @@
         #define USE_NPP_CONTEXT_API 1
     #endif
 #else
-    /* Default to context-aware API for unknown versions - safer for CUDA 13+ */
+    /* Default to context-aware API for unknown versions - safer for CUDA 13+ 
+     * Since CUDA 13 completely removed legacy functions, we assume modern API */
     #define USE_NPP_CONTEXT_API 1
+#endif
+
+/* Force context-aware API for CUDA 13+ since legacy functions don't exist */
+#ifndef USE_NPP_CONTEXT_API
+#define USE_NPP_CONTEXT_API 1
 #endif
 
 #ifdef USE_NPP_CONTEXT_API
