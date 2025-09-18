@@ -25,22 +25,27 @@
 #include <stdio.h>
 #include <string.h>
 
-/* CUDA 13+ NPP API compatibility - include NPP headers first to get version macros */
+/* CUDA 13+ NPP API compatibility */
 #include <npp.h>
 
-/* Version detection must come after NPP headers to access version macros */
-#if defined(CUDA_VERSION) && CUDA_VERSION >= 13000
-    #define CUDA13_API_CHANGES 1
-#elif defined(NPP_VERSION_MAJOR) && NPP_VERSION_MAJOR >= 13
-    #define CUDA13_API_CHANGES 1
-#elif defined(__CUDA_API_VERSION) && __CUDA_API_VERSION >= 13000
-    #define CUDA13_API_CHANGES 1
+/* CUDA 13 removed legacy NPP functions completely
+ * Use context-aware versions which work on CUDA 12.1+ and CUDA 13+ */
+
+/* Check if we have modern CUDA/NPP - multiple version detection methods */
+#if defined(CUDA_VERSION) && CUDA_VERSION >= 12010
+    #define USE_NPP_CONTEXT_API 1
+#elif defined(__CUDA_API_VERSION) && __CUDA_API_VERSION >= 12010
+    #define USE_NPP_CONTEXT_API 1  
+#elif defined(NPP_VERSION_MAJOR)
+    #if NPP_VERSION_MAJOR >= 12
+        #define USE_NPP_CONTEXT_API 1
+    #endif
 #else
-    /* For CUDA 13+, assume we need context-aware APIs if legacy functions cause errors */
-    #define CUDA13_API_CHANGES 1
+    /* Default to context-aware API for unknown versions - safer for CUDA 13+ */
+    #define USE_NPP_CONTEXT_API 1
 #endif
 
-#ifdef CUDA13_API_CHANGES
+#ifdef USE_NPP_CONTEXT_API
 #include <nppi_geometry_transforms.h>
 #include <nppi_data_exchange_and_initialization.h>
 #endif
@@ -753,8 +758,8 @@ static int nppscale_resize(AVFilterContext *ctx, NPPScaleStageContext *stage,
         int ow = stage->planes_out[i].width;
         int oh = stage->planes_out[i].height;
 
-#ifdef CUDA13_API_CHANGES
-        /* Use context-aware function for CUDA 13+ */
+#ifdef USE_NPP_CONTEXT_API
+        /* Use context-aware function for CUDA 12.1+/13+ */
         err = nppiResize_8u_C1R_Ctx(in->data[i], in->linesize[i], (NppiSize){ iw, ih },
                                     (NppiRect){ 0, 0, iw, ih },
                                     out->data[i], out->linesize[i], (NppiSize){ ow, oh },

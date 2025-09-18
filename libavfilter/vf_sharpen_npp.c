@@ -24,22 +24,27 @@
 #include <nppi.h>
 #include <nppi_filtering_functions.h>
 
-/* CUDA 13+ NPP API compatibility - include NPP headers first to get version macros */
+/* CUDA 13+ NPP API compatibility */
 #include <npp.h>
 
-/* Version detection must come after NPP headers to access version macros */
-#if defined(CUDA_VERSION) && CUDA_VERSION >= 13000
-    #define CUDA13_API_CHANGES 1
-#elif defined(NPP_VERSION_MAJOR) && NPP_VERSION_MAJOR >= 13
-    #define CUDA13_API_CHANGES 1
-#elif defined(__CUDA_API_VERSION) && __CUDA_API_VERSION >= 13000
-    #define CUDA13_API_CHANGES 1
+/* CUDA 13 removed legacy NPP functions completely
+ * Use context-aware versions which work on CUDA 12.1+ and CUDA 13+ */
+
+/* Check if we have modern CUDA/NPP - multiple version detection methods */
+#if defined(CUDA_VERSION) && CUDA_VERSION >= 12010
+    #define USE_NPP_CONTEXT_API 1
+#elif defined(__CUDA_API_VERSION) && __CUDA_API_VERSION >= 12010
+    #define USE_NPP_CONTEXT_API 1  
+#elif defined(NPP_VERSION_MAJOR)
+    #if NPP_VERSION_MAJOR >= 12
+        #define USE_NPP_CONTEXT_API 1
+    #endif
 #else
-    /* For CUDA 13+, assume we need context-aware APIs if legacy functions cause errors */
-    #define CUDA13_API_CHANGES 1
+    /* Default to context-aware API for unknown versions - safer for CUDA 13+ */
+    #define USE_NPP_CONTEXT_API 1
 #endif
 
-#ifdef CUDA13_API_CHANGES
+#ifdef USE_NPP_CONTEXT_API
 #include <nppi_filtering_functions.h>
 #endif
 
@@ -189,8 +194,8 @@ static int nppsharpen_sharpen(AVFilterContext* ctx, AVFrame* out, AVFrame* in)
         int ow = AV_CEIL_RSHIFT(in->width, (i == 1 || i == 2) ? desc->log2_chroma_w : 0);
         int oh = AV_CEIL_RSHIFT(in->height, (i == 1 || i == 2) ? desc->log2_chroma_h : 0);
 
-        /* Use context-aware function for CUDA 13+ */
-#ifdef CUDA13_API_CHANGES
+        /* Use context-aware function for CUDA compatibility */
+#ifdef USE_NPP_CONTEXT_API
         NppStatus err = nppiFilterSharpenBorder_8u_C1R_Ctx(
             in->data[i], in->linesize[i], (NppiSize){ow, oh}, (NppiPoint){0, 0},
             out->data[i], out->linesize[i], (NppiSize){ow, oh}, s->border_type, s->npp_stream_ctx);

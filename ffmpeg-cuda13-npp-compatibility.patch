@@ -34,6 +34,40 @@ API Function Migrations:
 
 The patch now correctly detects CUDA 13+ and applies the appropriate context-aware API calls.
 
+FFmpeg CUDA 13 NPP Compatibility Patch 
+=======================================
+
+This patch adds comprehensive compatibility support for NVIDIA CUDA 13 NPP library,
+addressing breaking changes where deprecated APIs were completely removed and replaced
+with context-aware versions.
+
+MINIMAL CHANGES APPROACH:
+- Only adds necessary NPP header includes where missing
+- Preserves existing logic and version detection
+- Maintains all existing functionality and backward compatibility
+
+Key changes:
+- Updated configure script to detect CUDA 13+ NPP library structure  
+- Added context-aware NPP function calls with backward compatibility
+- Implemented proper NPP stream context management
+- Added npp.h includes to ensure version macros are available
+
+Apply with: git apply ffmpeg-cuda13-npp-compatibility.patch
+
+Files modified:
+- configure (NPP library detection for CUDA 13+ structure)
+- libavfilter/vf_scale_npp.c (scale filter with npp.h include)
+- libavfilter/vf_sharpen_npp.c (sharpen filter with npp.h include)  
+- libavfilter/vf_transpose_npp.c (transpose filter with nppi.h include)
+
+API Function Migrations:
+- nppiResize_8u_C1R → nppiResize_8u_C1R_Ctx (when USE_NPP_CONTEXT_API defined)
+- nppiFilterSharpenBorder_8u_C1R → nppiFilterSharpenBorder_8u_C1R_Ctx (when USE_NPP_CONTEXT_API defined)
+- nppiRotate_8u_C1R → nppiRotate_8u_C1R_Ctx (when USE_NPP_CONTEXT_API defined)
+- nppiTranspose_8u_C1R → nppiTranspose_8u_C1R_Ctx (when USE_NPP_CONTEXT_API defined)
+
+The patch uses minimal changes - only adding header includes to resolve version detection issues.
+
 diff --git a/configure b/configure
 index 732de59..1a8e14f 100755
 --- a/configure
