@@ -729,10 +729,17 @@ static int nppscale_deinterleave(AVFilterContext *ctx, NPPScaleStageContext *sta
 
     switch (in_frames_ctx->sw_format) {
     case AV_PIX_FMT_NV12:
+#ifdef USE_NPP_CONTEXT_API
+        err = nppiYCbCr420_8u_P2P3R_Ctx(in->data[0], in->linesize[0],
+                                        in->data[1], in->linesize[1],
+                                        out->data, out->linesize,
+                                        (NppiSize){ in->width, in->height }, s->npp_stream_ctx);
+#else
         err = nppiYCbCr420_8u_P2P3R(in->data[0], in->linesize[0],
                                     in->data[1], in->linesize[1],
                                     out->data, out->linesize,
                                     (NppiSize){ in->width, in->height });
+#endif
         break;
     default:
         return AVERROR_BUG;
@@ -791,11 +798,19 @@ static int nppscale_interleave(AVFilterContext *ctx, NPPScaleStageContext *stage
 
     switch (out_frames_ctx->sw_format) {
     case AV_PIX_FMT_NV12:
+#ifdef USE_NPP_CONTEXT_API
+        err = nppiYCbCr420_8u_P3P2R_Ctx((const uint8_t**)in->data,
+                                        in->linesize,
+                                        out->data[0], out->linesize[0],
+                                        out->data[1], out->linesize[1],
+                                        (NppiSize){ in->width, in->height }, s->npp_stream_ctx);
+#else
         err = nppiYCbCr420_8u_P3P2R((const uint8_t**)in->data,
                                     in->linesize,
                                     out->data[0], out->linesize[0],
                                     out->data[1], out->linesize[1],
                                     (NppiSize){ in->width, in->height });
+#endif
         break;
     default:
         return AVERROR_BUG;
