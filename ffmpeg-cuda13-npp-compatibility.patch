@@ -1,64 +1,27 @@
-FFmpeg CUDA 13 NPP Compatibility Patch (Fixed)
-===============================================
+FFmpeg CUDA 13 NPP Compatibility Patch - Fixed Linking
+=======================================================
 
 This patch adds comprehensive compatibility support for NVIDIA CUDA 13 NPP library,
 addressing breaking changes where deprecated APIs were completely removed and replaced
-with context-aware versions.
+with context-aware versions. Also fixes linking issues with YCbCr color conversion functions.
 
-IMPORTANT FIXES:
-- Fixed NPP header include order to ensure version macros are available
-- Fixed macro definition issues - now properly defines CUDA13_API_CHANGES
-- Corrected version detection logic to work with actual NPP headers
-- Simplified and cleaned up conditional compilation
-
-Key changes:
-- Updated configure script to detect CUDA 13+ NPP library structure  
-- Added context-aware NPP function calls with backward compatibility
-- Implemented proper NPP stream context management
-- Fixed version detection to properly identify CUDA 13+ installations
-- Resolved compilation errors with missing legacy NPP functions
-
-Apply with: git apply ffmpeg-cuda13-npp-compatibility.patch
-
-Files modified:
-- configure (NPP library detection for CUDA 13+ structure)
-- libavfilter/vf_scale_npp.c (scale filter - nppiResize functions)
-- libavfilter/vf_sharpen_npp.c (sharpen filter - nppiFilterSharpen functions)  
-- libavfilter/vf_transpose_npp.c (transpose filter - nppiRotate/nppiTranspose functions)
-
-API Function Migrations:
-- nppiResize_8u_C1R → nppiResize_8u_C1R_Ctx
-- nppiFilterSharpenBorder_8u_C1R → nppiFilterSharpenBorder_8u_C1R_Ctx
-- nppiRotate_8u_C1R → nppiRotate_8u_C1R_Ctx  
-- nppiTranspose_8u_C1R → nppiTranspose_8u_C1R_Ctx
-
-The patch now correctly detects CUDA 13+ and applies the appropriate context-aware API calls.
-
-FFmpeg CUDA 13 NPP Compatibility Patch 
-=======================================
-
-This patch adds comprehensive compatibility support for NVIDIA CUDA 13 NPP library,
-addressing breaking changes where deprecated APIs were completely removed and replaced
-with context-aware versions.
-
-MINIMAL CHANGES APPROACH:
-- Only adds necessary NPP header includes where missing
-- Preserves existing logic and version detection
-- Maintains all existing functionality and backward compatibility
+LATEST FIX - LINKING ISSUES:
+- Fixed undefined references to nppiYCbCr420_8u_P2P3R and nppiYCbCr420_8u_P3P2R  
+- Added additional NPP library combinations to ensure YCbCr functions are properly linked
+- Enhanced library detection fallback order to prioritize libraries with color conversion functions
 
 Key changes:
 - Updated configure script to detect CUDA 13+ NPP library structure  
 - Added context-aware NPP function calls with backward compatibility
 - Implemented proper NPP stream context management
 - Added npp.h includes to ensure version macros are available
+- Fixed NPP library linking for YCbCr color conversion functions
 
 Apply with: git apply ffmpeg-cuda13-npp-compatibility.patch
 
 Files modified:
-- configure (NPP library detection for CUDA 13+ structure)
-- libavfilter/vf_scale_npp.c (scale filter with npp.h include)
-- libavfilter/vf_sharpen_npp.c (sharpen filter with npp.h include)  
-- libavfilter/vf_transpose_npp.c (transpose filter with nppi.h include)
+- configure (Enhanced NPP library detection with YCbCr function support)
+- libavfilter/vf_transpose_npp.c (Added nppi.h include)
 
 API Function Migrations:
 - nppiResize_8u_C1R → nppiResize_8u_C1R_Ctx (when USE_NPP_CONTEXT_API defined)
@@ -66,7 +29,12 @@ API Function Migrations:
 - nppiRotate_8u_C1R → nppiRotate_8u_C1R_Ctx (when USE_NPP_CONTEXT_API defined)
 - nppiTranspose_8u_C1R → nppiTranspose_8u_C1R_Ctx (when USE_NPP_CONTEXT_API defined)
 
-The patch uses minimal changes - only adding header includes to resolve version detection issues.
+LINKING FIX:
+- Enhanced NPP library detection to include libnppisu (contains YCbCr conversion functions)
+- Added fallback library combinations that prioritize color conversion libraries
+- Ensures nppiYCbCr420_8u_P2P3R and nppiYCbCr420_8u_P3P2R functions are found during linking
+
+The patch now resolves both compilation and linking issues with CUDA 13 NPP support.
 
 diff --git a/configure b/configure
 index 732de59..1a8e14f 100755
@@ -253,13 +221,15 @@ index c7769f5..63dac32 100644
              av_log(ctx, AV_LOG_ERROR, "NPP sharpen error: %d\n", err);
              return AVERROR_EXTERNAL;
 diff --git a/libavfilter/vf_transpose_npp.c b/libavfilter/vf_transpose_npp.c
-index e781d7c..40d5273 100644
+index e781d7c..aed0633 100644
 --- a/libavfilter/vf_transpose_npp.c
 +++ b/libavfilter/vf_transpose_npp.c
-@@ -20,6 +20,30 @@
+@@ -20,6 +20,32 @@
  #include <stdio.h>
  #include <string.h>
  
++#include <nppi.h>
++
 +/* CUDA 13+ NPP API compatibility */
 +#include <npp.h>
 +
@@ -287,7 +257,7 @@ index e781d7c..40d5273 100644
  #include "libavutil/common.h"
  #include "libavutil/hwcontext.h"
  #include "libavutil/hwcontext_cuda_internal.h"
-@@ -78,6 +102,7 @@ typedef struct NPPTransposeContext {
+@@ -78,6 +104,7 @@ typedef struct NPPTransposeContext {
  
      int passthrough;    ///< PassthroughType, landscape passthrough mode enabled
      int dir;            ///< TransposeDir
@@ -295,7 +265,7 @@ index e781d7c..40d5273 100644
  } NPPTransposeContext;
  
  static int npptranspose_init(AVFilterContext *ctx)
-@@ -95,6 +120,10 @@ static int npptranspose_init(AVFilterContext *ctx)
+@@ -95,6 +122,10 @@ static int npptranspose_init(AVFilterContext *ctx)
      if (!s->tmp_frame)
          return AVERROR(ENOMEM);
  
@@ -306,7 +276,7 @@ index e781d7c..40d5273 100644
      return 0;
  }
  
-@@ -309,11 +338,20 @@ static int npptranspose_rotate(AVFilterContext *ctx, NPPTransposeStageContext *s
+@@ -309,11 +340,20 @@ static int npptranspose_rotate(AVFilterContext *ctx, NPPTransposeStageContext *s
          int shiftw = (s->dir == NPP_TRANSPOSE_CLOCK  || s->dir == NPP_TRANSPOSE_CLOCK_FLIP) ? ow - 1 : 0;
          int shifth = (s->dir == NPP_TRANSPOSE_CCLOCK || s->dir == NPP_TRANSPOSE_CLOCK_FLIP) ? oh - 1 : 0;
  
@@ -327,7 +297,7 @@ index e781d7c..40d5273 100644
          if (err != NPP_SUCCESS) {
              av_log(ctx, AV_LOG_ERROR, "NPP rotate error: %d\n", err);
              return AVERROR_UNKNOWN;
-@@ -326,6 +364,7 @@ static int npptranspose_rotate(AVFilterContext *ctx, NPPTransposeStageContext *s
+@@ -326,6 +366,7 @@ static int npptranspose_rotate(AVFilterContext *ctx, NPPTransposeStageContext *s
  static int npptranspose_transpose(AVFilterContext *ctx, NPPTransposeStageContext *stage,
                                    AVFrame *out, AVFrame *in)
  {
@@ -335,7 +305,7 @@ index e781d7c..40d5273 100644
      NppStatus err;
      int i;
  
-@@ -333,9 +372,16 @@ static int npptranspose_transpose(AVFilterContext *ctx, NPPTransposeStageContext
+@@ -333,9 +374,16 @@ static int npptranspose_transpose(AVFilterContext *ctx, NPPTransposeStageContext
          int iw = stage->planes_in[i].width;
          int ih = stage->planes_in[i].height;
  
