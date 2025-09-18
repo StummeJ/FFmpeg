@@ -59,6 +59,18 @@ index 732de59..d5fde14 100755
                                 check_lib libnpp npp.h nppGetLibVersion -lnppi -lnppif -lnppc -lnppidei ||
                                 die "ERROR: libnpp not found"; }
  enabled libopencore_amrnb && require libopencore_amrnb opencore-amrnb/interf_dec.h Decoder_Interface_init -lopencore-amrnb
+diff --git a/libavfilter/vf_amf_common.c b/libavfilter/vf_amf_common.c
+index ae095c6..536e4ba 100644
+--- a/libavfilter/vf_amf_common.c
++++ b/libavfilter/vf_amf_common.c
+@@ -19,6 +19,7 @@
+ #include "vf_amf_common.h"
+ 
+ #include "libavutil/avassert.h"
++#include "libavutil/hwcontext.h"
+ #include "avfilter.h"
+ #include "avfilter_internal.h"
+ #include "formats.h"
 diff --git a/libavfilter/vf_scale_npp.c b/libavfilter/vf_scale_npp.c
 index 1b1b7b9..65427c6 100644
 --- a/libavfilter/vf_scale_npp.c
